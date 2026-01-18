@@ -14,12 +14,15 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
 } from "@mui/material";
 import { useMemo, useState } from "react";
 import { products as baseProducts } from "../data/products.js";
 import { useApp } from "../context/AppContext.jsx";
 
-// ===== UTIL: Semáforo de stock =====
 function stockChip(stock) {
   if (stock <= 0) return { label: "SIN STOCK", color: "error" };
   if (stock <= 5) return { label: "BAJO", color: "error" };
@@ -27,7 +30,6 @@ function stockChip(stock) {
   return { label: "OK", color: "success" };
 }
 
-// ===== UTIL: Estados de orden (Kanban) =====
 const KANBAN_COLUMNS = [
   { key: "PENDIENTE", title: "Pendiente" },
   { key: "PREPARANDO", title: "Preparando" },
@@ -39,41 +41,42 @@ function statusColor(status) {
   if (status === "ENTREGADO") return "success";
   if (status === "LISTO") return "primary";
   if (status === "PREPARANDO") return "warning";
-  return "default"; // PENDIENTE
+  return "default";
 }
 
 export default function Staff() {
   const { state, actions } = useApp();
 
-  // ===== RBAC =====
   const role = state.auth.user?.role ?? "staff";
   const canEditPrice = role === "manager";
 
-  // ===== MODAL: Orden seleccionada =====
   const [selectedOrder, setSelectedOrder] = useState(null);
 
-  // ===== MAPA DE ESTADOS (persistido en localStorage via Context) =====
   const statusById = state.ops?.orderStatusById ?? {};
 
-  // ===== Catálogo: aplica precios editados (mock manager) =====
+  const [q, setQ] = useState("");
+  const [stockFilter, setStockFilter] = useState("all"); // all | low | out
+
   const products = useMemo(() => {
-    return baseProducts.map((p) => ({
+    let list = baseProducts.map((p) => ({
       ...p,
       price: state.catalog.prices[p.id] ?? p.price,
+      stock: Number(p.stock ?? 0),
     }));
-  }, [state.catalog.prices]);
 
-  // ===== Auditoría: cambios de precio (solo manager la ve en UI) =====
+    const query = q.trim().toLowerCase();
+    if (query) list = list.filter((x) => x.name.toLowerCase().includes(query));
+
+    if (stockFilter === "low") list = list.filter((x) => x.stock > 0 && x.stock <= 5);
+    if (stockFilter === "out") list = list.filter((x) => x.stock <= 0);
+
+    return list;
+  }, [state.catalog.prices, q, stockFilter]);
+
   const audit = state.audit.priceChanges;
 
-  // ===== Kanban: agrupar órdenes por estado =====
   const ordersByStatus = useMemo(() => {
-    const groups = {
-      PENDIENTE: [],
-      PREPARANDO: [],
-      LISTO: [],
-      ENTREGADO: [],
-    };
+    const groups = { PENDIENTE: [], PREPARANDO: [], LISTO: [], ENTREGADO: [] };
 
     for (const o of state.orders.list) {
       const st = statusById[o.orderId] ?? "PENDIENTE";
@@ -83,33 +86,31 @@ export default function Staff() {
     return groups;
   }, [state.orders.list, statusById]);
 
-  // ===== Helpers de operación =====
-  const setStatus = (orderId, status) => {
-    actions.setOrderStatus(orderId, status);
-  };
+  const kpis = useMemo(() => {
+    const all = baseProducts.map((p) => Number(p.stock ?? 0));
+    const out = all.filter((s) => s <= 0).length;
+    const low = all.filter((s) => s > 0 && s <= 5).length;
 
-  const resetStatus = (orderId) => {
-    actions.resetOrderStatus(orderId);
-  };
+    const pending = state.orders.list.filter((o) => (statusById[o.orderId] ?? "PENDIENTE") === "PENDIENTE").length;
+    const preparing = state.orders.list.filter((o) => (statusById[o.orderId] ?? "PENDIENTE") === "PREPARANDO").length;
+    const ready = state.orders.list.filter((o) => (statusById[o.orderId] ?? "PENDIENTE") === "LISTO").length;
+
+    return { out, low, pending, preparing, ready };
+  }, [state.orders.list, statusById]);
+
+  const setStatus = (orderId, status) => actions.setOrderStatus(orderId, status);
+  const resetStatus = (orderId) => actions.resetOrderStatus(orderId);
 
   return (
     <Container sx={{ py: 3 }}>
-      {/* ===== BANNER FIJO (riesgo operativo) ===== */}
       <Alert
         severity="warning"
-        sx={{
-          mb: 2,
-          borderRadius: 3,
-          position: "sticky",
-          top: 72,
-          zIndex: 1,
-        }}
+        sx={{ mb: 2, borderRadius: 3, position: "sticky", top: 72, zIndex: 1 }}
       >
         <b>Modo interno:</b> revisa con cuidado. Los cambios se reflejarán y pueden
         impactar con las ventas o clientes.
       </Alert>
 
-      {/* ===== HEADER ===== */}
       <Box
         sx={{
           display: "flex",
@@ -129,44 +130,82 @@ export default function Staff() {
         </Typography>
       </Box>
 
-      {/* ===== KANBAN ÓRDENES (operación real) ===== */}
+      {/* KPIs */}
+      <Grid container spacing={2} sx={{ mb: 2 }}>
+        <Grid item xs={12} md={3}>
+          <Paper sx={{ p: 2, borderRadius: 3 }}>
+            <Typography color="text.secondary" variant="body2">
+              Sin stock
+            </Typography>
+            <Typography variant="h5" fontWeight={950}>
+              {kpis.out}
+            </Typography>
+          </Paper>
+        </Grid>
+        <Grid item xs={12} md={3}>
+          <Paper sx={{ p: 2, borderRadius: 3 }}>
+            <Typography color="text.secondary" variant="body2">
+              Bajo stock (≤ 5)
+            </Typography>
+            <Typography variant="h5" fontWeight={950}>
+              {kpis.low}
+            </Typography>
+          </Paper>
+        </Grid>
+        <Grid item xs={12} md={2}>
+          <Paper sx={{ p: 2, borderRadius: 3 }}>
+            <Typography color="text.secondary" variant="body2">
+              Pendientes
+            </Typography>
+            <Typography variant="h5" fontWeight={950}>
+              {kpis.pending}
+            </Typography>
+          </Paper>
+        </Grid>
+        <Grid item xs={12} md={2}>
+          <Paper sx={{ p: 2, borderRadius: 3 }}>
+            <Typography color="text.secondary" variant="body2">
+              Preparando
+            </Typography>
+            <Typography variant="h5" fontWeight={950}>
+              {kpis.preparing}
+            </Typography>
+          </Paper>
+        </Grid>
+        <Grid item xs={12} md={2}>
+          <Paper sx={{ p: 2, borderRadius: 3 }}>
+            <Typography color="text.secondary" variant="body2">
+              Listas
+            </Typography>
+            <Typography variant="h5" fontWeight={950}>
+              {kpis.ready}
+            </Typography>
+          </Paper>
+        </Grid>
+      </Grid>
+
+      {/* Kanban */}
       <Paper sx={{ p: 2.5, borderRadius: 3, mb: 2 }}>
         <Stack spacing={0.5} sx={{ mb: 2 }}>
           <Typography fontWeight={900}>Órdenes — Operación</Typography>
           <Typography variant="body2" color="text.secondary">
-            Flujo: Pendiente → Preparando → Listo → Entregado. Usa “Ver detalle” para revisar contacto/dirección.
+            Flujo: Pendiente → Preparando → Listo → Entregado.
           </Typography>
         </Stack>
 
         <Grid container spacing={2}>
           {KANBAN_COLUMNS.map((col) => {
             const list = ordersByStatus[col.key] ?? [];
-
             return (
               <Grid key={col.key} item xs={12} sm={6} lg={3}>
-                <Paper
-                  variant="outlined"
-                  sx={{
-                    p: 1.5,
-                    borderRadius: 3,
-                    height: "100%",
-                    bgcolor: "background.paper",
-                  }}
-                >
-                  {/* Col header */}
-                  <Stack
-                    direction="row"
-                    alignItems="center"
-                    justifyContent="space-between"
-                    sx={{ mb: 1 }}
-                  >
+                <Paper variant="outlined" sx={{ p: 1.5, borderRadius: 3, height: "100%" }}>
+                  <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
                     <Typography fontWeight={900}>{col.title}</Typography>
                     <Chip size="small" label={list.length} />
                   </Stack>
 
                   <Divider sx={{ mb: 1.5 }} />
 
-                  {/* Cards */}
                   {list.length === 0 ? (
                     <Typography variant="body2" color="text.secondary">
                       Sin órdenes.
@@ -186,17 +225,8 @@ export default function Staff() {
                               border: "1px solid rgba(0,0,0,0.08)",
                             }}
                           >
-                            {/* Card header */}
-                            <Stack
-                              direction="row"
-                              justifyContent="space-between"
-                              alignItems="center"
-                              gap={1}
-                              flexWrap="wrap"
-                            >
-                              <Typography fontWeight={900}>
-                                {o.orderId}
-                              </Typography>
+                            <Stack direction="row" justifyContent="space-between" alignItems="center" gap={1} flexWrap="wrap">
+                              <Typography fontWeight={900}>{o.orderId}</Typography>
 
                               <Stack direction="row" spacing={1} alignItems="center">
                                 <Chip
@@ -213,7 +243,6 @@ export default function Staff() {
                               </Stack>
                             </Stack>
 
-                            {/* Info */}
                             <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
                               {new Date(o.atISO).toLocaleString("es-CL")}
                             </Typography>
@@ -229,48 +258,29 @@ export default function Staff() {
                               </Typography>
                             )}
 
-                            {/* Actions */}
                             <Stack direction="row" spacing={1} sx={{ mt: 1 }} flexWrap="wrap">
-                              <Button
-                                size="small"
-                                variant="outlined"
-                                onClick={() => setSelectedOrder(o)}
-                              >
+                              <Button size="small" variant="outlined" onClick={() => setSelectedOrder(o)}>
                                 Ver detalle
                               </Button>
 
-                              {/* Acciones de flujo (botones contextuales) */}
                               {status !== "PREPARANDO" && status !== "ENTREGADO" && (
-                                <Button
-                                  size="small"
-                                  variant="outlined"
-                                  onClick={() => setStatus(o.orderId, "PREPARANDO")}
-                                >
+                                <Button size="small" variant="outlined" onClick={() => setStatus(o.orderId, "PREPARANDO")}>
                                   Preparando
                                 </Button>
                               )}
 
                               {status !== "LISTO" && status !== "ENTREGADO" && (
-                                <Button
-                                  size="small"
-                                  variant="outlined"
-                                  onClick={() => setStatus(o.orderId, "LISTO")}
-                                >
+                                <Button size="small" variant="outlined" onClick={() => setStatus(o.orderId, "LISTO")}>
                                   Listo
                                 </Button>
                               )}
 
                               {status !== "ENTREGADO" && (
-                                <Button
-                                  size="small"
-                                  variant="outlined"
-                                  onClick={() => setStatus(o.orderId, "ENTREGADO")}
-                                >
+                                <Button size="small" variant="outlined" onClick={() => setStatus(o.orderId, "ENTREGADO")}>
                                   Entregado
                                 </Button>
                               )}
 
-                              {/* Reset solo para corregir errores operativos */}
                               <Button size="small" onClick={() => resetStatus(o.orderId)}>
                                 Reset
                               </Button>
@@ -287,10 +297,36 @@ export default function Staff() {
         </Grid>
       </Paper>
 
-      {/* ===== GRID PRINCIPAL: Catálogo interno + (opcional) Historial cambios ===== */}
+      {/* Catálogo interno + historial */}
       <Grid container spacing={2}>
-        {/* ===== CATÁLOGO INTERNO (stock + precios) ===== */}
         <Grid item xs={12} md={canEditPrice ? 8 : 12}>
+          <Paper sx={{ p: 2.5, borderRadius: 3, mb: 2 }}>
+            <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+              <TextField
+                size="small"
+                label="Buscar producto"
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                sx={{ minWidth: 260 }}
+              />
+
+              <FormControl size="small" sx={{ minWidth: 200 }}>
+                <InputLabel>Stock</InputLabel>
+                <Select
+                  value={stockFilter}
+                  label="Stock"
+                  onChange={(e) => setStockFilter(e.target.value)}
+                >
+                  <MenuItem value="all">Todos</MenuItem>
+                  <MenuItem value="low">Bajo stock</MenuItem>
+                  <MenuItem value="out">Sin stock</MenuItem>
+                </Select>
+              </FormControl>
+
+              <Chip size="small" label={`Resultados: ${products.length}`} />
+            </Stack>
+          </Paper>
+
           <Grid container spacing={2}>
             {products.map((p) => {
               const chip = stockChip(p.stock ?? 0);
@@ -316,11 +352,7 @@ export default function Staff() {
                         <PriceEditor
                           currentPrice={p.price}
                           onSave={(newPrice) =>
-                            actions.updatePrice({
-                              id: p.id,
-                              oldPrice: p.price,
-                              newPrice,
-                            })
+                            actions.updatePrice({ id: p.id, oldPrice: p.price, newPrice })
                           }
                         />
                       ) : (
@@ -336,7 +368,6 @@ export default function Staff() {
           </Grid>
         </Grid>
 
-        {/* ===== HISTORIAL CAMBIOS DE PRECIO (solo manager) ===== */}
         {canEditPrice && (
           <Grid item xs={12} md={4}>
             <Paper sx={{ p: 2, borderRadius: 3, position: "sticky", top: 140 }}>
@@ -344,7 +375,7 @@ export default function Staff() {
                 Historial de cambios
               </Typography>
               <Typography variant="body2" color="text.secondary" mb={2}>
-                Registro local (mock). En producción esto viene del backend.
+                Registro local (mock).
               </Typography>
 
               <Divider sx={{ mb: 2 }} />
@@ -375,17 +406,11 @@ export default function Staff() {
         )}
       </Grid>
 
-      {/* ===== MODAL: DETALLE ORDEN (operación) ===== */}
-      <OrderDetailDialog
-        open={Boolean(selectedOrder)}
-        order={selectedOrder}
-        onClose={() => setSelectedOrder(null)}
-      />
+      <OrderDetailDialog open={Boolean(selectedOrder)} order={selectedOrder} onClose={() => setSelectedOrder(null)} />
     </Container>
   );
 }
 
-// ===== COMPONENTE: Editor de precio (solo manager) =====
 function PriceEditor({ currentPrice, onSave }) {
   const [value, setValue] = useState(String(currentPrice));
 
@@ -413,7 +438,6 @@ function PriceEditor({ currentPrice, onSave }) {
   );
 }
 
-// ===== COMPONENTE: Modal detalle de orden =====
 function OrderDetailDialog({ open, order, onClose }) {
   if (!order) return null;
 
@@ -446,9 +470,7 @@ function OrderDetailDialog({ open, order, onClose }) {
           {isDelivery && (
             <Paper variant="outlined" sx={{ p: 1.5, borderRadius: 2 }}>
               <Typography fontWeight={800}>Dirección</Typography>
-              <Typography color="text.secondary">
-                {order.delivery?.address || "—"}
-              </Typography>
+              <Typography color="text.secondary">{order.delivery?.address || "—"}</Typography>
             </Paper>
           )}
 
@@ -464,10 +486,7 @@ function OrderDetailDialog({ open, order, onClose }) {
           <Typography fontWeight={900}>Items</Typography>
           <Stack spacing={1}>
             {order.items.map((x) => (
-              <Box
-                key={x.id}
-                sx={{ display: "flex", justifyContent: "space-between", gap: 2 }}
-              >
+              <Box key={x.id} sx={{ display: "flex", justifyContent: "space-between", gap: 2 }}>
                 <Typography>
                   {x.name} <span style={{ color: "#777" }}>x{x.qty}</span>
                 </Typography>
@@ -495,3 +514,4 @@ function OrderDetailDialog({ open, order, onClose }) {
     </Dialog>
   );
 }
+// Nota: Página de personal interno para gestionar inventario y órdenes

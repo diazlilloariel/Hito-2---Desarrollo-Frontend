@@ -22,7 +22,6 @@ export default function AppNavbar() {
   const isStaff = role === "staff" || role === "manager";
 
   const cartCount = state.cart.items.reduce((acc, x) => acc + x.qty, 0);
-
   const [cartOpen, setCartOpen] = useState(false);
 
   return (
@@ -60,7 +59,17 @@ export default function AppNavbar() {
           </Stack>
 
           <Stack direction="row" spacing={1} alignItems="center">
-            {/* Carrito: solo cliente */}
+            {!isStaff && (
+              <>
+                <Button color="inherit" component={RouterLink} to="/catalogo">
+                  Catálogo
+                </Button>
+                <Button color="inherit" component={RouterLink} to="/contact">
+                  Contacto
+                </Button>
+              </>
+            )}
+
             {!isStaff && (
               <IconButton color="inherit" onClick={() => setCartOpen(true)}>
                 <Badge badgeContent={cartCount} color="secondary">
@@ -85,9 +94,14 @@ export default function AppNavbar() {
                     Panel interno
                   </Button>
                 ) : (
-                  <Button color="inherit" component={RouterLink} to="/profile">
-                    Mi perfil
-                  </Button>
+                  <>
+                    <Button color="inherit" component={RouterLink} to="/orders">
+                      Mis pedidos
+                    </Button>
+                    <Button color="inherit" component={RouterLink} to="/profile">
+                      Mi perfil
+                    </Button>
+                  </>
                 )}
 
                 <Button color="inherit" onClick={actions.logout}>
@@ -99,10 +113,10 @@ export default function AppNavbar() {
         </Toolbar>
       </AppBar>
 
-      {/* Drawer (solo cliente) */}
       {!isStaff && (
         <CartDrawer open={cartOpen} onClose={() => setCartOpen(false)} />
       )}
     </>
   );
 }
+// Nota: Componente de barra de navegación que muestra enlaces según el estado de autenticación y rol del usuario

@@ -20,7 +20,6 @@ function moneyCLP(n) {
 }
 
 function genOrderId() {
-  // Mock simple
   return `FX-${Math.floor(100000 + Math.random() * 900000)}`;
 }
 
@@ -48,41 +47,42 @@ export default function Checkout() {
     if (!phone.trim()) return false;
     if (mode === "delivery" && !address.trim()) return false;
     return true;
-  }, [items.length, name, phone, mode, address]);
+  }, [items, name, phone, mode, address]);
 
-const onConfirm = () => {
-  const orderId = genOrderId();
-  const atISO = new Date().toISOString();
+  const onConfirm = () => {
+    const orderId = genOrderId();
+    const atISO = new Date().toISOString();
 
-  const order = {
-    orderId,
-    atISO,
-    mode, // pickup | delivery
-    customer: {
-      name: name.trim(),
-      email: state.auth.user?.email ?? "",
-      phone: phone.trim(),
-    },
-    delivery: mode === "delivery" ? { address: address.trim() } : null,
-    notes: notes.trim() || "",
-    items: items.map((x) => ({
-      id: x.id,
-      name: x.name,
-      price: x.price,
-      qty: x.qty,
-      lineTotal: x.price * x.qty,
-    })),
-    totals: {
-      subtotal,
-      total: subtotal, // por ahora sin shipping
-    },
+    const order = {
+      orderId,
+      atISO,
+      mode, // pickup | delivery
+      customer: {
+        name: name.trim(),
+        email: state.auth.user?.email ?? "",
+        phone: phone.trim(),
+      },
+      delivery: mode === "delivery" ? { address: address.trim() } : null,
+      notes: notes.trim() || "",
+      items: items.map((x) => ({
+        id: x.id,
+        name: x.name,
+        price: x.price,
+        qty: x.qty,
+        lineTotal: x.price * x.qty,
+      })),
+      totals: {
+        subtotal,
+        total: subtotal, // sin shipping por ahora
+      },
+    };
+
+    actions.createOrder(order);
+    actions.clearCart();
+    setDone({ orderId });
   };
 
-  actions.createOrder(order); // ✅ guarda historial
-  actions.clearCart();        // ✅ limpia carrito
-  setDone({ orderId });
-};
-
+  // ===== Carrito vacío =====
   if (!items.length && !done) {
     return (
       <Container sx={{ py: 3, maxWidth: 900 }}>
@@ -90,15 +90,17 @@ const onConfirm = () => {
           Checkout
         </Typography>
         <Alert severity="info">
-          No tienes productos en el carrito. Vuelve al catálogo para agregar productos.
+          No tienes productos en el carrito. Vuelve al catálogo para agregar
+          productos.
         </Alert>
-        <Button sx={{ mt: 2 }} variant="contained" onClick={() => nav("/")}>
+        <Button sx={{ mt: 2 }} variant="contained" onClick={() => nav("/catalogo")}>
           Ir al catálogo
         </Button>
       </Container>
     );
   }
 
+  // ===== Confirmación =====
   if (done) {
     return (
       <Container sx={{ py: 3, maxWidth: 900 }}>
@@ -122,8 +124,8 @@ const onConfirm = () => {
                 : "Modalidad: Despacho"}
             </Typography>
 
-            <Stack direction="row" spacing={1}>
-              <Button variant="contained" onClick={() => nav("/")}>
+            <Stack direction="row" spacing={1} flexWrap="wrap">
+              <Button variant="contained" onClick={() => nav("/catalogo")}>
                 Volver al catálogo
               </Button>
               <Button variant="outlined" onClick={() => nav("/profile")}>
@@ -136,6 +138,7 @@ const onConfirm = () => {
     );
   }
 
+  // ===== Formulario =====
   return (
     <Container sx={{ py: 3, maxWidth: 900 }}>
       <Typography variant="h5" fontWeight={900} mb={2}>
@@ -151,7 +154,10 @@ const onConfirm = () => {
 
           <Stack spacing={1}>
             {items.map((x) => (
-              <Box key={x.id} sx={{ display: "flex", justifyContent: "space-between", gap: 2 }}>
+              <Box
+                key={x.id}
+                sx={{ display: "flex", justifyContent: "space-between", gap: 2 }}
+              >
                 <Typography>
                   {x.name} <span style={{ color: "#777" }}>x{x.qty}</span>
                 </Typography>
@@ -198,8 +204,18 @@ const onConfirm = () => {
           </Typography>
 
           <Stack spacing={2}>
-            <TextField label="Nombre" value={name} onChange={(e) => setName(e.target.value)} required />
-            <TextField label="Teléfono" value={phone} onChange={(e) => setPhone(e.target.value)} required />
+            <TextField
+              label="Nombre"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              required
+            />
+            <TextField
+              label="Teléfono"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              required
+            />
 
             {mode === "delivery" && (
               <TextField
@@ -221,8 +237,8 @@ const onConfirm = () => {
         </Paper>
 
         {/* Acciones */}
-        <Stack direction="row" spacing={1} justifyContent="flex-end">
-          <Button variant="outlined" onClick={() => nav("/")}>
+        <Stack direction="row" spacing={1} justifyContent="flex-end" flexWrap="wrap">
+          <Button variant="outlined" onClick={() => nav("/catalogo")}>
             Seguir comprando
           </Button>
           <Button

@@ -9,19 +9,43 @@ import {
   Stack,
   Chip,
   Divider,
+  Box,
 } from "@mui/material";
 import AddShoppingCartIcon from "@mui/icons-material/AddShoppingCart";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import { useApp } from "../../context/AppContext.jsx";
 
-export default function ProductCard({ id, name, price, image }) {
-  const { actions } = useApp();
+// Semáforo de stock (staff)
+function stockChip(stock) {
+  const s = Number(stock ?? 0);
+  if (s <= 0) return { label: "SIN STOCK", color: "error" };
+  if (s <= 5) return { label: "BAJO", color: "error" };
+  if (s <= 15) return { label: "ATENCIÓN", color: "warning" };
+  return { label: "OK", color: "success" };
+}
+
+export default function ProductCard({ id, name, price, image, stock, status }) {
+  const { state, actions } = useApp();
   const [added, setAdded] = useState(false);
+
+  const role = state.auth.user?.role ?? "customer";
+  const isStaff = role === "staff" || role === "manager";
 
   const priceCLP = useMemo(
     () => `$${Number(price).toLocaleString("es-CL")}`,
     [price]
   );
+
+  const s = Number(stock ?? 0);
+  const outOfStock = !isStaff && s <= 0;
+
+  // Chip marketing (cliente)
+  const showMarketing = !isStaff && (status === "offer" || status === "new");
+  const marketingLabel = status === "offer" ? "OFERTA" : "NUEVO";
+  const marketingColor = status === "offer" ? "secondary" : "success";
+
+  // Chip stock (staff)
+  const stockInfo = useMemo(() => stockChip(stock), [stock]);
 
   const handleAdd = () => {
     actions.addToCart({ id, name, price });
@@ -47,13 +71,23 @@ export default function ProductCard({ id, name, price, image }) {
 
       <CardContent sx={{ flexGrow: 1 }}>
         <Stack spacing={1}>
-          <Stack direction="row" justifyContent="space-between" alignItems="flex-start" gap={1}>
+          <Stack
+            direction="row"
+            justifyContent="space-between"
+            alignItems="flex-start"
+            gap={1}
+          >
             <Typography fontWeight={900} sx={{ lineHeight: 1.2 }}>
               {name}
             </Typography>
 
-            {/* Badge simple (puedes cambiarlo después por stock/oferta real) */}
-            <Chip size="small" label="FERRE" color="secondary" />
+            <Box>
+              {isStaff ? (
+                <Chip size="small" label={stockInfo.label} color={stockInfo.color} />
+              ) : showMarketing ? (
+                <Chip size="small" label={marketingLabel} color={marketingColor} />
+              ) : null}
+            </Box>
           </Stack>
 
           <Divider />
@@ -66,20 +100,30 @@ export default function ProductCard({ id, name, price, image }) {
               {priceCLP}
             </Typography>
           </Stack>
+
+          {isStaff && (
+            <Typography variant="body2" color="text.secondary">
+              Stock: <b>{Number(stock ?? 0)}</b>
+            </Typography>
+          )}
         </Stack>
       </CardContent>
 
-      <CardActions sx={{ p: 2, pt: 0 }}>
-        <Button
-          fullWidth
-          variant={added ? "outlined" : "contained"}
-          onClick={handleAdd}
-          startIcon={added ? <CheckCircleIcon /> : <AddShoppingCartIcon />}
-          sx={{ fontWeight: 800 }}
-        >
-          {added ? "Agregado" : "Agregar al carrito"}
-        </Button>
-      </CardActions>
+      {!isStaff && (
+        <CardActions sx={{ p: 2, pt: 0 }}>
+          <Button
+            fullWidth
+            variant={added ? "outlined" : "contained"}
+            onClick={handleAdd}
+            disabled={outOfStock}
+            startIcon={added ? <CheckCircleIcon /> : <AddShoppingCartIcon />}
+            sx={{ fontWeight: 800 }}
+          >
+            {outOfStock ? "Sin stock" : added ? "Agregado" : "Agregar al carrito"}
+          </Button>
+        </CardActions>
+      )}
     </Card>
   );
 }
+// Nota: Componente de tarjeta de producto reutilizable para mostrar información del producto y permitir agregar al carrito

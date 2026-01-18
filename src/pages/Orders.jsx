@@ -1,18 +1,17 @@
 import {
-  Container,
-  Paper,
-  Typography,
-  Stack,
-  Divider,
   Box,
-  Chip,
   Button,
+  Chip,
+  Container,
+  Divider,
   Dialog,
-  DialogTitle,
-  DialogContent,
   DialogActions,
+  DialogContent,
+  DialogTitle,
+  Paper,
+  Stack,
+  Typography,
 } from "@mui/material";
-import { Link as RouterLink } from "react-router-dom";
 import { useMemo, useState } from "react";
 import { useApp } from "../context/AppContext.jsx";
 
@@ -20,65 +19,86 @@ function moneyCLP(n) {
   return `$${Number(n).toLocaleString("es-CL")}`;
 }
 
-export default function Profile() {
+const FILTERS = [
+  { key: "ALL", label: "Todas" },
+  { key: "PENDIENTE", label: "Pendiente" },
+  { key: "PREPARANDO", label: "Preparando" },
+  { key: "LISTO", label: "Listo" },
+  { key: "ENTREGADO", label: "Entregado" },
+];
+
+export default function Orders() {
   const { state } = useApp();
   const user = state.auth.user;
 
+  const [filter, setFilter] = useState("ALL");
   const [selected, setSelected] = useState(null);
 
+  const email = (user?.email ?? "").toLowerCase();
+  const statusById = state.ops?.orderStatusById ?? {};
+
   const myOrders = useMemo(() => {
-    const email = (user?.email ?? "").toLowerCase();
-    return state.orders.list.filter(
-      (o) => (o.customer?.email ?? "").toLowerCase() === email
-    );
-  }, [state.orders.list, user?.email]);
+    const list = state.orders.list
+      .filter((o) => (o.customer?.email ?? "").toLowerCase() === email)
+      .map((o) => ({
+        ...o,
+        opStatus: statusById[o.orderId] ?? "PENDIENTE",
+      }));
+
+    if (filter === "ALL") return list;
+    return list.filter((o) => o.opStatus === filter);
+  }, [state.orders.list, email, filter, statusById]);
 
   return (
-    <Container sx={{ py: 4, maxWidth: 900 }}>
+    <Container sx={{ py: 3, maxWidth: 900 }}>
       <Paper sx={{ p: 3, borderRadius: 3 }}>
-        <Stack direction="row" justifyContent="space-between" alignItems="center" flexWrap="wrap" gap={1}>
-          <Box>
-            <Typography variant="h6" fontWeight={900}>
-              Mi perfil
-            </Typography>
-            <Typography>Nombre: {user?.name}</Typography>
-            <Typography>Email: {user?.email}</Typography>
-          </Box>
+        <Stack spacing={1}>
+          <Typography variant="h5" fontWeight={950}>
+            Mis pedidos
+          </Typography>
+          <Typography color="text.secondary">
+            Revisa tus compras y el estado operativo (pendiente → entregado).
+          </Typography>
 
-          <Button component={RouterLink} to="/orders" variant="contained" sx={{ fontWeight: 900 }}>
-            Ver mis pedidos
-          </Button>
+          <Stack direction="row" spacing={1} flexWrap="wrap">
+            {FILTERS.map((f) => (
+              <Chip
+                key={f.key}
+                label={f.label}
+                clickable
+                color={filter === f.key ? "primary" : "default"}
+                variant={filter === f.key ? "filled" : "outlined"}
+                onClick={() => setFilter(f.key)}
+              />
+            ))}
+          </Stack>
         </Stack>
       </Paper>
 
       <Paper sx={{ p: 3, borderRadius: 3, mt: 2 }}>
-        <Typography variant="h6" fontWeight={900} mb={1}>
-          Últimas compras
-        </Typography>
-
         {myOrders.length === 0 ? (
           <Typography color="text.secondary">
-            Aún no tienes compras registradas.
+            No hay pedidos para el filtro seleccionado.
           </Typography>
         ) : (
           <Stack spacing={2}>
-            {myOrders.slice(0, 5).map((o) => (
+            {myOrders.map((o) => (
               <Box key={o.orderId}>
                 <Stack
                   direction="row"
                   justifyContent="space-between"
                   alignItems="center"
-                  gap={2}
                   flexWrap="wrap"
+                  gap={1}
                 >
-                  <Typography fontWeight={900}>Orden {o.orderId}</Typography>
-
-                  <Stack direction="row" spacing={1} alignItems="center">
+                  <Typography fontWeight={950}>{o.orderId}</Typography>
+                  <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
                     <Chip
                       size="small"
                       label={o.mode === "pickup" ? "Retiro" : "Despacho"}
                       color={o.mode === "pickup" ? "default" : "primary"}
                     />
+                    <Chip size="small" label={o.opStatus} variant="outlined" />
                     <Typography color="text.secondary" variant="body2">
                       {new Date(o.atISO).toLocaleString("es-CL")}
                     </Typography>
@@ -110,12 +130,11 @@ export default function Profile() {
 
 function OrderDetailDialog({ open, order, onClose }) {
   if (!order) return null;
-
   const isDelivery = order.mode === "delivery";
 
   return (
     <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
-      <DialogTitle>Detalle orden {order.orderId}</DialogTitle>
+      <DialogTitle>Detalle {order.orderId}</DialogTitle>
 
       <DialogContent dividers>
         <Stack spacing={1.5}>
@@ -133,9 +152,7 @@ function OrderDetailDialog({ open, order, onClose }) {
           {isDelivery && (
             <Paper variant="outlined" sx={{ p: 1.5, borderRadius: 2 }}>
               <Typography fontWeight={800}>Dirección</Typography>
-              <Typography color="text.secondary">
-                {order.delivery?.address || "—"}
-              </Typography>
+              <Typography color="text.secondary">{order.delivery?.address || "—"}</Typography>
             </Paper>
           )}
 
@@ -149,7 +166,6 @@ function OrderDetailDialog({ open, order, onClose }) {
           <Divider />
 
           <Typography fontWeight={900}>Items</Typography>
-
           <Stack spacing={1}>
             {order.items.map((x) => (
               <Box
@@ -159,7 +175,9 @@ function OrderDetailDialog({ open, order, onClose }) {
                 <Typography>
                   {x.name} <span style={{ color: "#777" }}>x{x.qty}</span>
                 </Typography>
-                <Typography fontWeight={800}>{moneyCLP(x.lineTotal)}</Typography>
+                <Typography fontWeight={800}>
+                  ${Number(x.lineTotal).toLocaleString("es-CL")}
+                </Typography>
               </Box>
             ))}
           </Stack>
@@ -168,7 +186,9 @@ function OrderDetailDialog({ open, order, onClose }) {
 
           <Box sx={{ display: "flex", justifyContent: "space-between" }}>
             <Typography color="text.secondary">Total</Typography>
-            <Typography fontWeight={900}>{moneyCLP(order.totals.total)}</Typography>
+            <Typography fontWeight={900}>
+              ${Number(order.totals.total).toLocaleString("es-CL")}
+            </Typography>
           </Box>
         </Stack>
       </DialogContent>
@@ -179,4 +199,4 @@ function OrderDetailDialog({ open, order, onClose }) {
     </Dialog>
   );
 }
-// Nota: Página de perfil de usuario donde puede ver su información y últimas compras
+// Nota: Página para que los usuarios vean sus pedidos y el estado operativo de cada uno

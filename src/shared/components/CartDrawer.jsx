@@ -6,6 +6,7 @@ import {
   Stack,
   Divider,
   Button,
+  Tooltip,
 } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
 import AddIcon from "@mui/icons-material/Add";
@@ -14,26 +15,38 @@ import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import { useMemo } from "react";
 import { useApp } from "../../context/AppContext.jsx";
 import { useNavigate } from "react-router-dom";
+import { products as baseProducts } from "../../data/products.js";
 
 export default function CartDrawer({ open, onClose }) {
   const { state, actions } = useApp();
   const nav = useNavigate();
   const items = state.cart.items;
 
+  const stockById = useMemo(() => {
+    const map = {};
+    for (const p of baseProducts) map[p.id] = Number(p.stock ?? 0);
+    return map;
+  }, []);
+
   const total = useMemo(
     () => items.reduce((acc, x) => acc + x.price * x.qty, 0),
     [items]
   );
 
+  const inc = (id) => {
+    const max = stockById[id];
+    const current = items.find((x) => x.id === id)?.qty ?? 0;
+
+    if (Number.isFinite(max) && current >= max) {
+      return actions.notify("Stock máximo alcanzado.", "warning");
+    }
+    actions.incQty(id, max);
+  };
+
   return (
     <Drawer anchor="right" open={open} onClose={onClose}>
       <Box sx={{ width: 360, p: 2 }}>
-        <Stack
-          direction="row"
-          alignItems="center"
-          justifyContent="space-between"
-          mb={1}
-        >
+        <Stack direction="row" alignItems="center" justifyContent="space-between" mb={1}>
           <Typography variant="h6" fontWeight={900}>
             Carrito
           </Typography>
@@ -48,71 +61,73 @@ export default function CartDrawer({ open, onClose }) {
           <Typography color="text.secondary">Tu carrito está vacío.</Typography>
         ) : (
           <Stack spacing={1.5}>
-            {items.map((x) => (
-              <Box
-                key={x.id}
-                sx={{
-                  border: "1px solid rgba(0,0,0,0.08)",
-                  borderRadius: 2,
-                  p: 1.25,
-                }}
-              >
-                <Stack spacing={0.75}>
-                  <Typography fontWeight={800} sx={{ lineHeight: 1.2 }}>
-                    {x.name}
-                  </Typography>
+            {items.map((x) => {
+              const max = stockById[x.id];
+              const maxReached = Number.isFinite(max) && x.qty >= max;
 
-                  <Typography color="text.secondary" variant="body2">
-                    ${Number(x.price).toLocaleString("es-CL")} c/u
-                  </Typography>
+              return (
+                <Box
+                  key={x.id}
+                  sx={{
+                    border: "1px solid rgba(0,0,0,0.08)",
+                    borderRadius: 2,
+                    p: 1.25,
+                  }}
+                >
+                  <Stack spacing={0.75}>
+                    <Typography fontWeight={800} sx={{ lineHeight: 1.2 }}>
+                      {x.name}
+                    </Typography>
 
-                  <Stack
-                    direction="row"
-                    alignItems="center"
-                    justifyContent="space-between"
-                  >
-                    <Stack direction="row" spacing={1} alignItems="center">
-                      <IconButton
-                        size="small"
-                        onClick={() => actions.decQty(x.id)}
-                      >
-                        <RemoveIcon fontSize="small" />
-                      </IconButton>
+                    <Typography color="text.secondary" variant="body2">
+                      ${Number(x.price).toLocaleString("es-CL")} c/u
+                    </Typography>
 
-                      <Typography fontWeight={900}>{x.qty}</Typography>
-
-                      <IconButton
-                        size="small"
-                        onClick={() => actions.incQty(x.id)}
-                      >
-                        <AddIcon fontSize="small" />
-                      </IconButton>
-                    </Stack>
-
-                    <Stack direction="row" spacing={1} alignItems="center">
-                      <Typography fontWeight={900}>
-                        ${Number(x.price * x.qty).toLocaleString("es-CL")}
+                    {Number.isFinite(max) && (
+                      <Typography color="text.secondary" variant="caption">
+                        Stock: {max}
                       </Typography>
-                      <IconButton
-                        size="small"
-                        onClick={() => actions.removeFromCart(x.id)}
-                      >
-                        <DeleteOutlineIcon fontSize="small" />
-                      </IconButton>
+                    )}
+
+                    <Stack direction="row" alignItems="center" justifyContent="space-between">
+                      <Stack direction="row" spacing={1} alignItems="center">
+                        <IconButton size="small" onClick={() => actions.decQty(x.id)}>
+                          <RemoveIcon fontSize="small" />
+                        </IconButton>
+
+                        <Typography fontWeight={900}>{x.qty}</Typography>
+
+                        <Tooltip title={maxReached ? "Stock máximo alcanzado" : "Aumentar"}>
+                          <span>
+                            <IconButton
+                              size="small"
+                              onClick={() => inc(x.id)}
+                              disabled={maxReached}
+                            >
+                              <AddIcon fontSize="small" />
+                            </IconButton>
+                          </span>
+                        </Tooltip>
+                      </Stack>
+
+                      <Stack direction="row" spacing={1} alignItems="center">
+                        <Typography fontWeight={900}>
+                          ${Number(x.price * x.qty).toLocaleString("es-CL")}
+                        </Typography>
+                        <IconButton size="small" onClick={() => actions.removeFromCart(x.id)}>
+                          <DeleteOutlineIcon fontSize="small" />
+                        </IconButton>
+                      </Stack>
                     </Stack>
                   </Stack>
-                </Stack>
-              </Box>
-            ))}
+                </Box>
+              );
+            })}
 
             <Divider />
 
             <Stack spacing={1}>
-              <Stack
-                direction="row"
-                justifyContent="space-between"
-                alignItems="center"
-              >
+              <Stack direction="row" justifyContent="space-between" alignItems="center">
                 <Typography color="text.secondary">Total</Typography>
                 <Typography variant="h6" fontWeight={900}>
                   ${Number(total).toLocaleString("es-CL")}
@@ -130,11 +145,7 @@ export default function CartDrawer({ open, onClose }) {
                 Ir a pagar
               </Button>
 
-              <Button
-                variant="outlined"
-                onClick={actions.clearCart}
-                sx={{ fontWeight: 800 }}
-              >
+              <Button variant="outlined" onClick={actions.clearCart} sx={{ fontWeight: 800 }}>
                 Vaciar carrito
               </Button>
             </Stack>
@@ -144,3 +155,4 @@ export default function CartDrawer({ open, onClose }) {
     </Drawer>
   );
 }
+// Nota: Componente de cajón lateral para mostrar y gestionar el carrito de compras

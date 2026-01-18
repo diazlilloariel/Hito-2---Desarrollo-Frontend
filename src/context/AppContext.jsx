@@ -1,10 +1,5 @@
-import {
-  createContext,
-  useContext,
-  useEffect,
-  useMemo,
-  useReducer,
-} from "react";
+import { createContext, useContext, useEffect, useMemo, useReducer } from "react";
+import { products as baseProducts } from "../data/products.js";
 
 const AppContext = createContext(null);
 const STORAGE_KEY = "ferretex:v1";
@@ -15,7 +10,10 @@ const STORAGE_KEY = "ferretex:v1";
 const baseState = {
   auth: { isAuth: false, user: null }, // {name, email, role}
   cart: { items: [] }, // {id, name, price, qty}
-  ui: { sort: "price_asc" },
+  ui: {
+    sort: "price_asc",
+    snackbar: { open: false, message: "", severity: "info" }, // ✅
+  },
   catalog: { prices: {} }, // precios editados (mock)
   audit: { priceChanges: [] }, // historial cambios de precio
   orders: { list: [] }, // historial de compras
@@ -44,7 +42,7 @@ function loadState() {
     ...baseState,
     auth: parsed.auth ?? baseState.auth,
     cart: parsed.cart ?? baseState.cart,
-    ui: parsed.ui ?? baseState.ui,
+    ui: { ...baseState.ui, ...(parsed.ui ?? {}) },
     catalog: parsed.catalog ?? baseState.catalog,
     audit: parsed.audit ?? baseState.audit,
     orders: parsed.orders ?? baseState.orders,
@@ -84,6 +82,25 @@ function reducer(state, action) {
     /* ---- UI ---- */
     case "SET_SORT":
       return { ...state, ui: { ...state.ui, sort: action.payload } };
+
+    case "OPEN_SNACKBAR":
+      return {
+        ...state,
+        ui: {
+          ...state.ui,
+          snackbar: {
+            open: true,
+            message: action.payload.message,
+            severity: action.payload.severity ?? "info",
+          },
+        },
+      };
+
+    case "CLOSE_SNACKBAR":
+      return {
+        ...state,
+        ui: { ...state.ui, snackbar: { ...state.ui.snackbar, open: false } },
+      };
 
     /* ---- Cart ---- */
     case "ADD_TO_CART": {
@@ -216,27 +233,95 @@ export function AppProvider({ children }) {
     saveState(state);
   }, [state]);
 
+  // ===== Helpers de stock (mock) =====
+  const getStockById = (id) => {
+    const p = baseProducts.find((x) => x.id === id);
+    const s = Number(p?.stock ?? 0);
+    return Number.isFinite(s) ? s : 0;
+  };
+
+  const getCartQty = (id) =>
+    state.cart.items.find((x) => x.id === id)?.qty ?? 0;
+
   const actions = useMemo(
     () => ({
+      /* UI */
+      notify: (message, severity = "info") =>
+        dispatch({ type: "OPEN_SNACKBAR", payload: { message, severity } }),
+      closeSnackbar: () => dispatch({ type: "CLOSE_SNACKBAR" }),
+
       /* Auth */
       login: (user) => dispatch({ type: "LOGIN", payload: user }),
       logout: () => dispatch({ type: "LOGOUT" }),
 
-      /* UI */
+      /* UI sort */
       setSort: (sort) => dispatch({ type: "SET_SORT", payload: sort }),
 
-      /* Cart */
-      addToCart: (product) =>
-        dispatch({ type: "ADD_TO_CART", payload: product }),
-      incQty: (id) => dispatch({ type: "INC_QTY", payload: id }),
+      /* Cart (con guard de stock) */
+      addToCart: (product) => {
+        const role = state.auth.user?.role ?? "customer";
+        if (role !== "customer") return;
+
+        const stock = getStockById(product.id);
+        const current = getCartQty(product.id);
+
+        if (stock <= 0) {
+          dispatch({
+            type: "OPEN_SNACKBAR",
+            payload: { message: "Producto sin stock.", severity: "warning" },
+          });
+          return;
+        }
+
+        if (current >= stock) {
+          dispatch({
+            type: "OPEN_SNACKBAR",
+            payload: {
+              message: `Stock máximo alcanzado (${stock}).`,
+              severity: "warning",
+            },
+          });
+          return;
+        }
+
+        dispatch({ type: "ADD_TO_CART", payload: product });
+      },
+
+      incQty: (id) => {
+        const role = state.auth.user?.role ?? "customer";
+        if (role !== "customer") return;
+
+        const stock = getStockById(id);
+        const current = getCartQty(id);
+
+        if (stock <= 0) {
+          dispatch({
+            type: "OPEN_SNACKBAR",
+            payload: { message: "Producto sin stock.", severity: "warning" },
+          });
+          return;
+        }
+
+        if (current >= stock) {
+          dispatch({
+            type: "OPEN_SNACKBAR",
+            payload: {
+              message: `Stock máximo alcanzado (${stock}).`,
+              severity: "warning",
+            },
+          });
+          return;
+        }
+
+        dispatch({ type: "INC_QTY", payload: id });
+      },
+
       decQty: (id) => dispatch({ type: "DEC_QTY", payload: id }),
-      removeFromCart: (id) =>
-        dispatch({ type: "REMOVE_FROM_CART", payload: id }),
+      removeFromCart: (id) => dispatch({ type: "REMOVE_FROM_CART", payload: id }),
       clearCart: () => dispatch({ type: "CLEAR_CART" }),
 
       /* Orders */
-      createOrder: (order) =>
-        dispatch({ type: "CREATE_ORDER", payload: order }),
+      createOrder: (order) => dispatch({ type: "CREATE_ORDER", payload: order }),
 
       /* Prices */
       updatePrice: ({ id, oldPrice, newPrice }) => {
@@ -257,7 +342,7 @@ export function AppProvider({ children }) {
       /* Debug */
       resetPersistence: () => dispatch({ type: "RESET_PERSISTENCE" }),
     }),
-    [state.auth.user]
+    [state.auth.user, state.cart.items]
   );
 
   const value = useMemo(() => ({ state, actions }), [state, actions]);
@@ -273,3 +358,4 @@ export function useApp() {
   if (!ctx) throw new Error("useApp must be used within <AppProvider>");
   return ctx;
 }
+// Nota: Contexto global de la aplicación que maneja estado de autenticación, carrito, UI, catálogo, órdenes y operaciones
