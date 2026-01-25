@@ -15,7 +15,6 @@ import AddShoppingCartIcon from "@mui/icons-material/AddShoppingCart";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import { useApp } from "../../context/AppContext.jsx";
 
-// Semáforo de stock (staff)
 function stockChip(stock) {
   const s = Number(stock ?? 0);
   if (s <= 0) return { label: "SIN STOCK", color: "error" };
@@ -39,16 +38,20 @@ export default function ProductCard({ id, name, price, image, stock, status }) {
   const s = Number(stock ?? 0);
   const outOfStock = !isStaff && s <= 0;
 
-  // Chip marketing (cliente)
   const showMarketing = !isStaff && (status === "offer" || status === "new");
   const marketingLabel = status === "offer" ? "OFERTA" : "NUEVO";
   const marketingColor = status === "offer" ? "secondary" : "success";
 
-  // Chip stock (staff)
   const stockInfo = useMemo(() => stockChip(stock), [stock]);
 
   const handleAdd = () => {
-    actions.addToCart({ id, name, price });
+    actions.addToCart({
+      id,
+      name,
+      price: Number(price),
+      stock: Number(stock ?? 0),
+      image: image || "",
+    });
     setAdded(true);
     window.setTimeout(() => setAdded(false), 900);
   };
@@ -61,22 +64,14 @@ export default function ProductCard({ id, name, price, image, stock, status }) {
         flexDirection: "column",
         borderRadius: 3,
         transition: "transform 150ms ease, box-shadow 150ms ease",
-        "&:hover": {
-          transform: "translateY(-2px)",
-          boxShadow: 6,
-        },
+        "&:hover": { transform: "translateY(-2px)", boxShadow: 6 },
       }}
     >
       <CardMedia component="img" height="190" image={image} alt={name} />
 
       <CardContent sx={{ flexGrow: 1 }}>
         <Stack spacing={1}>
-          <Stack
-            direction="row"
-            justifyContent="space-between"
-            alignItems="flex-start"
-            gap={1}
-          >
+          <Stack direction="row" justifyContent="space-between" alignItems="flex-start" gap={1}>
             <Typography fontWeight={900} sx={{ lineHeight: 1.2 }}>
               {name}
             </Typography>
@@ -126,4 +121,3 @@ export default function ProductCard({ id, name, price, image, stock, status }) {
     </Card>
   );
 }
-// Nota: Componente de tarjeta de producto reutilizable para mostrar información del producto y permitir agregar al carrito

@@ -31,11 +31,13 @@ export default function AppRouter() {
     <Routes>
       <Route path="/" element={<Home />} />
 
-      <Route path="/catalogo" element={<Catalog />} />
-      <Route path="/catalog" element={<Navigate to="/catalogo" replace />} />
+      {/* ✅ Canonical */}
+      <Route path="/catalog" element={<Catalog />} />
+      {/* ✅ Alias */}
+      <Route path="/catalogo" element={<Navigate to="/catalog" replace />} />
 
+      {/* Producto */}
       <Route path="/producto/:id" element={<ProductDetail />} />
-      {/* Alias correcto: usa el mismo componente, NO Navigate con :id */}
       <Route path="/productos/:id" element={<ProductDetail />} />
 
       <Route path="/policies" element={<Policies />} />
@@ -85,4 +87,6 @@ export default function AppRouter() {
     </Routes>
   );
 }
-// Nota: Componente de enrutamiento principal que define rutas públicas y protegidas según el rol del usuario
+// Manejo de rutas protegidas según roles de usuario
+// Redirección automática para rutas alias
+// Uso de componente ProtectedRoute para validación de acceso

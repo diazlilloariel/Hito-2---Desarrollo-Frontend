@@ -10,20 +10,7 @@ import {
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useApp } from "../context/AppContext.jsx";
-
-// Mock silencioso: define roles por email.
-// En producción esto lo entregará el backend vía JWT.
-function resolveRoleByEmail(email) {
-  const e = email.trim().toLowerCase();
-
-  // Ejemplos (ajústalos):
-  // - staff: termina en @ferretex.cl
-  // - manager: correo específico del encargado
-  if (e === "encargado@ferretex.cl") return "manager";
-  if (e.endsWith("@ferretex.cl")) return "staff";
-
-  return "customer";
-}
+import { ferretexApi, normalizeRole } from "../shared/api/ferretexApi.js";
 
 export default function Login() {
   const { actions } = useApp();
@@ -31,28 +18,43 @@ export default function Login() {
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
 
-  const onSubmit = (e) => {
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const onSubmit = async (e) => {
     e.preventDefault();
     setError("");
+    setLoading(true);
 
-    // Mock básico: solo valida que haya algo
-    if (!email.trim() || !password.trim()) {
-      setError("Completa email y password.");
-      return;
+    try {
+      const data = await ferretexApi.login({ email, password });
+      // data: { token, user: { id, name, email, role } }
+      const token = data?.token;
+      const u = data?.user;
+
+      if (!token || !u) throw new Error("Respuesta inválida del servidor.");
+
+      const role = normalizeRole(u.role);
+
+      // Guardamos token para próximas pantallas (sin tocar AppContext si no quieres)
+      localStorage.setItem("ferretex:token", token);
+
+      // Mantengo tu contrato actual: actions.login({name,email,role})
+      actions.login({
+        id: u.id,
+        name: u.name,
+        email: u.email,
+        role,
+        token, // no rompe; queda disponible para futuro
+      });
+
+      nav(role === "customer" ? "/profile" : "/staff");
+    } catch (err) {
+      setError(err?.message || "No se pudo iniciar sesión.");
+    } finally {
+      setLoading(false);
     }
-
-    const role = resolveRoleByEmail(email);
-
-    actions.login({
-      name: role === "manager" ? "Encargado" : role === "staff" ? "Personal" : "Cliente",
-      email,
-      role,
-    });
-
-    // Redirección silenciosa según rol
-    nav(role === "customer" ? "/profile" : "/staff");
   };
 
   return (
@@ -82,8 +84,13 @@ export default function Login() {
             required
           />
 
-          <Button type="submit" variant="contained" sx={{ fontWeight: 800 }}>
-            Entrar
+          <Button
+            type="submit"
+            variant="contained"
+            sx={{ fontWeight: 800 }}
+            disabled={loading}
+          >
+            {loading ? "Entrando..." : "Entrar"}
           </Button>
         </Stack>
       </Paper>

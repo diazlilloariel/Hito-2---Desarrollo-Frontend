@@ -1,12 +1,10 @@
 import {
   Container,
-  Box,
   Typography,
   FormControl,
   InputLabel,
   Select,
   MenuItem,
-  Grid,
   TextField,
   Button,
   Paper,
@@ -15,302 +13,367 @@ import {
   Switch,
   FormControlLabel,
   Divider,
+  Alert,
+  Skeleton,
+  Box,
+  InputAdornment,
 } from "@mui/material";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { products as baseProducts } from "../data/products.js";
 import ProductCard from "../shared/components/ProductCard.jsx";
 import { useApp } from "../context/AppContext.jsx";
+import { ferretexApi } from "../shared/api/ferretexApi.js";
+
+const EMPTY_OBJ = Object.freeze({});
 
 function isNonEmptyString(v) {
   return typeof v === "string" && v.trim().length > 0;
 }
 
-function parseMaybeNumber(v) {
-  if (!isNonEmptyString(v)) return null;
-  const n = Number(String(v).replace(/[^\d]/g, ""));
-  return Number.isFinite(n) ? n : null;
+function normalizeDigitsOnly(v) {
+  return String(v ?? "").replace(/[^\d]/g, "");
+}
+
+function normalizeProduct(p) {
+  return {
+    ...p,
+    name: p.name ?? p.nombre ?? "Producto",
+    price: Number(p.price ?? p.precio ?? 0),
+    image: p.image ?? p.imagen_url ?? p.image_url ?? "",
+    status: p.status ?? "none",
+    category: p.category ?? p.categoria ?? p.cat ?? p.category_name ?? "general",
+    stock: Number(p.stock ?? p.stock_actual ?? p.stockActual ?? 0),
+  };
 }
 
 export default function Catalog() {
-  const { state, actions } = useApp();
-  const [params, setParams] = useSearchParams();
+  const { state } = useApp();
 
-  // URL como fuente de verdad
-  const q = params.get("q") ?? "";
-  const cat = params.get("cat") ?? "all";
-  const status = params.get("status") ?? "all";
-  const sort = params.get("sort") ?? state.ui.sort ?? "price_asc";
-  const inStock = (params.get("inStock") ?? "false") === "true";
-  const minPrice = params.get("minPrice") ?? "";
-  const maxPrice = params.get("maxPrice") ?? "";
+  const priceOverrides = useMemo(
+    () => state?.catalog?.prices ?? EMPTY_OBJ,
+    [state?.catalog?.prices]
+  );
 
-  const updateParams = (patch) => {
-    const next = new URLSearchParams(params);
+  const [searchParams, setSearchParams] = useSearchParams();
 
-    Object.entries(patch).forEach(([key, value]) => {
-      const v = String(value ?? "").trim();
+  // Query params
+  const qParam = searchParams.get("q") ?? "";
+  const catParam = searchParams.get("cat") ?? "";
+  const statusParam = searchParams.get("status") ?? "";
+  const sortParam = searchParams.get("sort") ?? "";
+  const inStockParam = searchParams.get("inStock") ?? "false";
+  const minPriceParam = searchParams.get("minPrice") ?? "";
+  const maxPriceParam = searchParams.get("maxPrice") ?? "";
 
-      const shouldDelete =
-        v === "" ||
-        (key === "cat" && v === "all") ||
-        (key === "status" && v === "all") ||
-        (key === "inStock" && v === "false") ||
-        (key === "sort" && v === "price_asc");
+  // Local UI state (inputs)
+  const [q, setQ] = useState(qParam);
+  const [cat, setCat] = useState(catParam);
+  const [status, setStatus] = useState(statusParam);
+  const [sort, setSort] = useState(sortParam);
+  const [inStock, setInStock] = useState(inStockParam === "true");
+  const [minPrice, setMinPrice] = useState(minPriceParam);
+  const [maxPrice, setMaxPrice] = useState(maxPriceParam);
 
-      if (shouldDelete) next.delete(key);
-      else next.set(key, v);
-    });
+  // Applied filters
+  const [minPriceApplied, setMinPriceApplied] = useState(minPriceParam);
+  const [maxPriceApplied, setMaxPriceApplied] = useState(maxPriceParam);
 
-    if (patch.sort) actions.setSort(patch.sort);
-    setParams(next, { replace: true });
-  };
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [products, setProducts] = useState([]);
 
-  const products = useMemo(() => {
-    let p = baseProducts.map((prod) => ({
-      ...prod,
-      price: state.catalog.prices[prod.id] ?? prod.price,
-      status: prod.status ?? "none",
-      category: prod.category ?? "general",
-      stock: Number(prod.stock ?? 0),
-    }));
+  // Sync query params -> inputs
+  useEffect(() => {
+    setQ(qParam);
+    setCat(catParam);
+    setStatus(statusParam);
+    setSort(sortParam);
+    setInStock(inStockParam === "true");
+    setMinPrice(minPriceParam);
+    setMaxPrice(maxPriceParam);
+    setMinPriceApplied(minPriceParam);
+    setMaxPriceApplied(maxPriceParam);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    qParam,
+    catParam,
+    statusParam,
+    sortParam,
+    inStockParam,
+    minPriceParam,
+    maxPriceParam,
+  ]);
 
-    const query = q.trim().toLowerCase();
-    if (query) p = p.filter((x) => x.name.toLowerCase().includes(query));
+  // Fetch
+  useEffect(() => {
+    let alive = true;
 
-    if (cat !== "all") p = p.filter((x) => (x.category ?? "general") === cat);
+    const run = async () => {
+      setLoading(true);
+      setError("");
 
-    if (status !== "all") p = p.filter((x) => (x.status ?? "none") === status);
+      try {
+        const filters = {
+          q: isNonEmptyString(qParam) ? qParam : undefined,
+          cat: isNonEmptyString(catParam) ? catParam : undefined,
+          status: isNonEmptyString(statusParam) ? statusParam : undefined,
+          sort: isNonEmptyString(sortParam) ? sortParam : undefined,
+          inStock: inStock ? "true" : undefined,
+          minPrice: isNonEmptyString(minPriceApplied) ? minPriceApplied : undefined,
+          maxPrice: isNonEmptyString(maxPriceApplied) ? maxPriceApplied : undefined,
+        };
 
-    if (inStock) p = p.filter((x) => Number(x.stock ?? 0) > 0);
+        const list = await ferretexApi.getProducts(filters);
+        if (!alive) return;
 
-    const minP = parseMaybeNumber(minPrice);
-    const maxP = parseMaybeNumber(maxPrice);
+        const normalized = (Array.isArray(list) ? list : []).map(normalizeProduct);
 
-    if (minP != null) p = p.filter((x) => Number(x.price) >= minP);
-    if (maxP != null) p = p.filter((x) => Number(x.price) <= maxP);
+        const enriched = normalized.map((p) => ({
+          ...p,
+          price: priceOverrides[p.id] ?? p.price,
+        }));
 
-    if (sort === "price_desc") p.sort((a, b) => b.price - a.price);
-    else p.sort((a, b) => a.price - b.price);
+        setProducts(enriched);
+      } catch (e) {
+        if (!alive) return;
+        setError(e?.message || "No se pudo cargar el catálogo.");
+        setProducts([]);
+      } finally {
+        if (alive) setLoading(false);
+      }
+    };
 
-    return p;
-  }, [q, cat, status, sort, inStock, minPrice, maxPrice, state.catalog.prices]);
+    run();
+    return () => {
+      alive = false;
+    };
+  }, [
+    qParam,
+    catParam,
+    statusParam,
+    sortParam,
+    inStock,
+    minPriceApplied,
+    maxPriceApplied,
+    priceOverrides,
+  ]);
 
   const activeChips = useMemo(() => {
     const chips = [];
-
-    if (q.trim())
-      chips.push({
-        key: "q",
-        label: `Buscar: ${q.trim()}`,
-        onDelete: () => updateParams({ q: "" }),
-      });
-
-    if (cat !== "all") {
-      const map = {
-        herramientas: "Herramientas",
-        fijaciones: "Fijaciones",
-        seguridad: "Seguridad",
-        electricidad: "Electricidad",
-      };
-      chips.push({
-        key: "cat",
-        label: `Categoría: ${map[cat] ?? cat}`,
-        onDelete: () => updateParams({ cat: "all" }),
-      });
-    }
-
-    if (status !== "all") {
-      chips.push({
-        key: "status",
-        label: status === "offer" ? "Estado: Ofertas" : "Estado: Nuevos",
-        onDelete: () => updateParams({ status: "all" }),
-      });
-    }
-
-    if (inStock)
-      chips.push({
-        key: "inStock",
-        label: "Solo con stock",
-        onDelete: () => updateParams({ inStock: "false" }),
-      });
-
-    if (isNonEmptyString(minPrice))
-      chips.push({
-        key: "minPrice",
-        label: `Mín: $${String(minPrice).replace(/[^\d]/g, "")}`,
-        onDelete: () => updateParams({ minPrice: "" }),
-      });
-
-    if (isNonEmptyString(maxPrice))
-      chips.push({
-        key: "maxPrice",
-        label: `Máx: $${String(maxPrice).replace(/[^\d]/g, "")}`,
-        onDelete: () => updateParams({ maxPrice: "" }),
-      });
-
-    if (sort !== "price_asc")
-      chips.push({
-        key: "sort",
-        label: "Orden: mayor a menor",
-        onDelete: () => updateParams({ sort: "price_asc" }),
-      });
-
+    if (isNonEmptyString(qParam)) chips.push({ key: "q", label: `Buscar: ${qParam}` });
+    if (isNonEmptyString(catParam)) chips.push({ key: "cat", label: `Categoría: ${catParam}` });
+    if (isNonEmptyString(statusParam))
+      chips.push({ key: "status", label: `Estado: ${statusParam}` });
+    if (isNonEmptyString(sortParam)) chips.push({ key: "sort", label: `Orden: ${sortParam}` });
+    if (inStock) chips.push({ key: "inStock", label: "Solo con stock" });
+    if (isNonEmptyString(minPriceApplied))
+      chips.push({ key: "minPrice", label: `Min: ${minPriceApplied}` });
+    if (isNonEmptyString(maxPriceApplied))
+      chips.push({ key: "maxPrice", label: `Max: ${maxPriceApplied}` });
     return chips;
-  }, [q, cat, status, inStock, minPrice, maxPrice, sort]);
+  }, [qParam, catParam, statusParam, sortParam, inStock, minPriceApplied, maxPriceApplied]);
 
-  const hasAnyFilter = activeChips.length > 0;
+  const applyFilters = () => {
+    const next = new URLSearchParams(searchParams);
+
+    const qV = q.trim();
+    const catV = cat.trim();
+    const statusV = status.trim();
+    const sortV = sort.trim();
+
+    const minV = normalizeDigitsOnly(minPrice);
+    const maxV = normalizeDigitsOnly(maxPrice);
+
+    if (isNonEmptyString(qV)) next.set("q", qV);
+    else next.delete("q");
+
+    if (isNonEmptyString(catV)) next.set("cat", catV);
+    else next.delete("cat");
+
+    if (isNonEmptyString(statusV)) next.set("status", statusV);
+    else next.delete("status");
+
+    if (isNonEmptyString(sortV)) next.set("sort", sortV);
+    else next.delete("sort");
+
+    if (inStock) next.set("inStock", "true");
+    else next.delete("inStock");
+
+    if (isNonEmptyString(minV)) next.set("minPrice", minV);
+    else next.delete("minPrice");
+
+    if (isNonEmptyString(maxV)) next.set("maxPrice", maxV);
+    else next.delete("maxPrice");
+
+    setMinPriceApplied(minV);
+    setMaxPriceApplied(maxV);
+
+    setSearchParams(next);
+  };
+
+  const clearFilters = () => {
+    setQ("");
+    setCat("");
+    setStatus("");
+    setSort("");
+    setInStock(false);
+    setMinPrice("");
+    setMaxPrice("");
+    setMinPriceApplied("");
+    setMaxPriceApplied("");
+    setSearchParams({});
+  };
 
   return (
-    <Container sx={{ py: 3 }}>
-      <Paper sx={{ p: 2.5, borderRadius: 3, mb: 2 }}>
-        <Stack spacing={1.25}>
+    <Container sx={{ py: 4 }}>
+      <Stack spacing={2.25}>
+        <Stack>
+          <Typography variant="h4" fontWeight={950}>
+            Catálogo
+          </Typography>
+          <Typography variant="body2" sx={{ opacity: 0.75 }}>
+            Productos cargados desde backend + base de datos.
+          </Typography>
+        </Stack>
+
+        {/* Filters */}
+        <Paper sx={{ p: 2, borderRadius: 3 }}>
+          {/* Fila 1: buscar + selects (más anchos) */}
           <Box
             sx={{
-              display: "flex",
+              display: "grid",
               gap: 2,
-              flexWrap: "wrap",
+              gridTemplateColumns: { xs: "1fr", md: "2fr 1fr 1fr 1fr" },
               alignItems: "center",
             }}
           >
-            <Typography variant="h5" fontWeight={900} sx={{ flexGrow: 1 }}>
-              Catálogo
-            </Typography>
-
             <TextField
-              size="small"
-              label="Buscar producto"
+              fullWidth
+              label="Buscar"
               value={q}
-              onChange={(e) => updateParams({ q: e.target.value })}
-              sx={{ minWidth: 260 }}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Ej: taladro, tornillos..."
             />
 
-            <FormControl size="small" sx={{ minWidth: 220 }}>
+            <FormControl fullWidth>
               <InputLabel>Categoría</InputLabel>
-              <Select
-                value={cat}
-                label="Categoría"
-                onChange={(e) => updateParams({ cat: e.target.value })}
-              >
-                <MenuItem value="all">Todas</MenuItem>
-                <MenuItem value="herramientas">Herramientas</MenuItem>
-                <MenuItem value="fijaciones">Fijaciones</MenuItem>
-                <MenuItem value="seguridad">Seguridad</MenuItem>
-                <MenuItem value="electricidad">Electricidad</MenuItem>
+              <Select value={cat} label="Categoría" onChange={(e) => setCat(e.target.value)}>
+                <MenuItem value="">Todas</MenuItem>
+                <MenuItem value="herramientas">herramientas</MenuItem>
+                <MenuItem value="fijaciones">fijaciones</MenuItem>
+                <MenuItem value="seguridad">seguridad</MenuItem>
+                <MenuItem value="electricidad">electricidad</MenuItem>
               </Select>
             </FormControl>
 
-            <FormControl size="small" sx={{ minWidth: 200 }}>
+            <FormControl fullWidth>
               <InputLabel>Estado</InputLabel>
-              <Select
-                value={status}
-                label="Estado"
-                onChange={(e) => updateParams({ status: e.target.value })}
-              >
-                <MenuItem value="all">Todos</MenuItem>
-                <MenuItem value="offer">Ofertas</MenuItem>
-                <MenuItem value="new">Nuevos</MenuItem>
+              <Select value={status} label="Estado" onChange={(e) => setStatus(e.target.value)}>
+                <MenuItem value="">Todos</MenuItem>
+                <MenuItem value="offer">offer</MenuItem>
+                <MenuItem value="new">new</MenuItem>
+                <MenuItem value="none">none</MenuItem>
               </Select>
             </FormControl>
 
-            <FormControl size="small" sx={{ minWidth: 220 }}>
-              <InputLabel>Ordenar</InputLabel>
-              <Select
-                value={sort}
-                label="Ordenar"
-                onChange={(e) => updateParams({ sort: e.target.value })}
-              >
-                <MenuItem value="price_asc">Precio: menor a mayor</MenuItem>
-                <MenuItem value="price_desc">Precio: mayor a menor</MenuItem>
+            <FormControl fullWidth>
+              <InputLabel>Orden</InputLabel>
+              <Select value={sort} label="Orden" onChange={(e) => setSort(e.target.value)}>
+                <MenuItem value="">Default</MenuItem>
+                <MenuItem value="price_asc">Precio ↑</MenuItem>
+                <MenuItem value="price_desc">Precio ↓</MenuItem>
               </Select>
             </FormControl>
-
-            {hasAnyFilter && (
-              <Button
-                variant="outlined"
-                onClick={() => {
-                  setParams(new URLSearchParams(), { replace: true });
-                  actions.setSort("price_asc");
-                }}
-                sx={{ whiteSpace: "nowrap" }}
-              >
-                Limpiar
-              </Button>
-            )}
           </Box>
 
-          <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap", alignItems: "center" }}>
+          {/* Fila 2: stock + min/max + botones */}
+          <Box
+            sx={{
+              mt: 2,
+              display: "grid",
+              gap: 2,
+              gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr", md: "1fr 1fr 1fr 1fr" },
+              alignItems: "center",
+            }}
+          >
             <FormControlLabel
-              control={
-                <Switch
-                  checked={inStock}
-                  onChange={(e) =>
-                    updateParams({ inStock: e.target.checked ? "true" : "false" })
-                  }
-                />
-              }
+              control={<Switch checked={inStock} onChange={(e) => setInStock(e.target.checked)} />}
               label="Solo con stock"
             />
 
             <TextField
-              size="small"
-              label="Precio mín."
+              fullWidth
+              label="Min"
               value={minPrice}
-              onChange={(e) => updateParams({ minPrice: e.target.value })}
-              sx={{ width: 140 }}
-              inputProps={{ inputMode: "numeric" }}
+              onChange={(e) => setMinPrice(e.target.value)}
+              inputMode="numeric"
+              InputProps={{
+                startAdornment: <InputAdornment position="start">$</InputAdornment>,
+              }}
             />
 
             <TextField
-              size="small"
-              label="Precio máx."
+              fullWidth
+              label="Max"
               value={maxPrice}
-              onChange={(e) => updateParams({ maxPrice: e.target.value })}
-              sx={{ width: 140 }}
-              inputProps={{ inputMode: "numeric" }}
+              onChange={(e) => setMaxPrice(e.target.value)}
+              inputMode="numeric"
+              InputProps={{
+                startAdornment: <InputAdornment position="start">$</InputAdornment>,
+              }}
             />
 
-            <Chip size="small" label={`Productos: ${products.length}`} />
+            <Stack direction="row" spacing={1} justifyContent={{ xs: "flex-start", md: "flex-end" }}>
+              <Button variant="contained" onClick={applyFilters} sx={{ fontWeight: 900 }}>
+                Aplicar
+              </Button>
+              <Button variant="outlined" onClick={clearFilters} sx={{ fontWeight: 900 }}>
+                Limpiar
+              </Button>
+            </Stack>
           </Box>
 
-          {hasAnyFilter && (
+          {activeChips.length > 0 && (
             <>
-              <Divider />
-              <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+              <Divider sx={{ my: 2 }} />
+              <Stack direction="row" spacing={1} flexWrap="wrap">
                 {activeChips.map((c) => (
-                  <Chip
-                    key={c.key}
-                    label={c.label}
-                    onDelete={c.onDelete}
-                    variant="outlined"
-                    sx={{ fontWeight: 800 }}
-                  />
+                  <Chip key={c.key} label={c.label} />
                 ))}
               </Stack>
             </>
           )}
-        </Stack>
-      </Paper>
+        </Paper>
 
-      {products.length === 0 ? (
-        <Box sx={{ mt: 3 }}>
-          <Typography variant="h6" fontWeight={800}>
-            Sin resultados
-          </Typography>
-          <Typography color="text.secondary" sx={{ mt: 0.5 }}>
-            Ajusta filtros o limpia la búsqueda.
-          </Typography>
-        </Box>
-      ) : (
-        <Grid container spacing={2}>
-          {products.map((p) => (
-            <Grid key={p.id} item xs={12} sm={6} md={4}>
-              <ProductCard {...p} stock={p.stock} status={p.status} />
-            </Grid>
-          ))}
-        </Grid>
-      )}
+        {/* Results */}
+        {error && <Alert severity="error">{error}</Alert>}
+
+        {loading ? (
+          <Box sx={{ display: "grid", gap: 2, gridTemplateColumns: "repeat(12, 1fr)" }}>
+            {Array.from({ length: 8 }).map((_, i) => (
+              <Box key={i} sx={{ gridColumn: { xs: "span 12", sm: "span 6", md: "span 3" } }}>
+                <Paper sx={{ p: 2, borderRadius: 3 }}>
+                  <Skeleton variant="rectangular" height={150} />
+                  <Skeleton sx={{ mt: 1 }} />
+                  <Skeleton width="60%" />
+                </Paper>
+              </Box>
+            ))}
+          </Box>
+        ) : (
+          <Box sx={{ display: "grid", gap: 2, gridTemplateColumns: "repeat(12, 1fr)" }}>
+            {products.map((p) => (
+              <Box key={p.id} sx={{ gridColumn: { xs: "span 12", sm: "span 6", md: "span 3" } }}>
+                <ProductCard {...p} />
+              </Box>
+            ))}
+          </Box>
+        )}
+
+        {!loading && !error && products.length === 0 && (
+          <Alert severity="info">No hay productos para los filtros seleccionados.</Alert>
+        )}
+      </Stack>
     </Container>
   );
 }
-// Nota: Página de catálogo que permite buscar, filtrar y ordenar productos disponibles

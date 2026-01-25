@@ -15,33 +15,25 @@ import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import { useMemo } from "react";
 import { useApp } from "../../context/AppContext.jsx";
 import { useNavigate } from "react-router-dom";
-import { products as baseProducts } from "../../data/products.js";
 
 export default function CartDrawer({ open, onClose }) {
   const { state, actions } = useApp();
   const nav = useNavigate();
   const items = state.cart.items;
 
+  // Stock desde el propio item (inyectado al agregar al carrito)
   const stockById = useMemo(() => {
     const map = {};
-    for (const p of baseProducts) map[p.id] = Number(p.stock ?? 0);
+    for (const it of items) map[it.id] = Number(it.stock ?? Infinity);
     return map;
-  }, []);
+  }, [items]);
 
   const total = useMemo(
-    () => items.reduce((acc, x) => acc + x.price * x.qty, 0),
+    () => items.reduce((acc, x) => acc + Number(x.price) * Number(x.qty), 0),
     [items]
   );
 
-  const inc = (id) => {
-    const max = stockById[id];
-    const current = items.find((x) => x.id === id)?.qty ?? 0;
-
-    if (Number.isFinite(max) && current >= max) {
-      return actions.notify("Stock máximo alcanzado.", "warning");
-    }
-    actions.incQty(id, max);
-  };
+  const inc = (id) => actions.incQty(id);
 
   return (
     <Drawer anchor="right" open={open} onClose={onClose}>
@@ -155,4 +147,3 @@ export default function CartDrawer({ open, onClose }) {
     </Drawer>
   );
 }
-// Nota: Componente de cajón lateral para mostrar y gestionar el carrito de compras

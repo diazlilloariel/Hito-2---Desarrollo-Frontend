@@ -1,28 +1,16 @@
 import { createContext, useContext, useEffect, useMemo, useReducer } from "react";
-import { products as baseProducts } from "../data/products.js";
+import { ferretexApi as api } from "../shared/api/ferretexApi.js";
 
 const AppContext = createContext(null);
-const STORAGE_KEY = "ferretex:v1";
+const STORAGE_KEY = "ferretex:v2";
 
-/* =========================
-   Estado base
-========================= */
 const baseState = {
-  auth: { isAuth: false, user: null }, // {name, email, role}
-  cart: { items: [] }, // {id, name, price, qty}
-  ui: {
-    sort: "price_asc",
-    snackbar: { open: false, message: "", severity: "info" }, // ✅
-  },
-  catalog: { prices: {} }, // precios editados (mock)
-  audit: { priceChanges: [] }, // historial cambios de precio
-  orders: { list: [] }, // historial de compras
-  ops: { orderStatusById: {} }, // estado operativo por ordenId
+  auth: { isAuth: false, user: null, token: null },
+  cart: { items: [] }, // {id,name,price,qty,stock?,image?}
+  ui: { sort: "price_asc" },
+  orders: { my: [] },
 };
 
-/* =========================
-   Helpers localStorage
-========================= */
 function safeParse(json) {
   try {
     return JSON.parse(json);
@@ -31,23 +19,27 @@ function safeParse(json) {
   }
 }
 
-function loadState() {
-  const raw = localStorage.getItem(STORAGE_KEY);
-  if (!raw) return baseState;
-
-  const parsed = safeParse(raw);
-  if (!parsed) return baseState;
+function sanitizeLoadedState(parsed) {
+  const auth = parsed?.auth ?? baseState.auth;
+  const isAuth = Boolean(auth?.token && auth?.user);
 
   return {
     ...baseState,
-    auth: parsed.auth ?? baseState.auth,
-    cart: parsed.cart ?? baseState.cart,
-    ui: { ...baseState.ui, ...(parsed.ui ?? {}) },
-    catalog: parsed.catalog ?? baseState.catalog,
-    audit: parsed.audit ?? baseState.audit,
-    orders: parsed.orders ?? baseState.orders,
-    ops: parsed.ops ?? baseState.ops,
+    auth: isAuth
+      ? { isAuth: true, token: auth.token, user: auth.user }
+      : { ...baseState.auth },
+    cart: parsed?.cart ?? baseState.cart,
+    ui: parsed?.ui ?? baseState.ui,
+    orders: parsed?.orders ?? baseState.orders,
   };
+}
+
+function loadState() {
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if (!raw) return baseState;
+  const parsed = safeParse(raw);
+  if (!parsed) return baseState;
+  return sanitizeLoadedState(parsed);
 }
 
 function saveState(state) {
@@ -55,72 +47,70 @@ function saveState(state) {
     auth: state.auth,
     cart: state.cart,
     ui: state.ui,
-    catalog: state.catalog,
-    audit: state.audit,
     orders: state.orders,
-    ops: state.ops,
   };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+
+  // compat: algunos componentes guardan token aquí
+  if (state.auth?.token) localStorage.setItem("ferretex:token", state.auth.token);
+  else localStorage.removeItem("ferretex:token");
 }
 
-/* =========================
-   Reducer
-========================= */
 function reducer(state, action) {
   switch (action.type) {
-    /* ---- Auth ---- */
-    case "LOGIN":
-      return { ...state, auth: { isAuth: true, user: action.payload } };
+    case "SET_SORT":
+      return { ...state, ui: { ...state.ui, sort: action.payload } };
+
+    case "SET_SESSION":
+      return {
+        ...state,
+        auth: {
+          isAuth: true,
+          token: action.payload.token,
+          user: action.payload.user,
+        },
+      };
 
     case "LOGOUT":
       return {
         ...state,
-        auth: { isAuth: false, user: null },
+        auth: { isAuth: false, user: null, token: null },
         cart: { items: [] },
+        orders: { my: [] },
       };
 
-    /* ---- UI ---- */
-    case "SET_SORT":
-      return { ...state, ui: { ...state.ui, sort: action.payload } };
-
-    case "OPEN_SNACKBAR":
-      return {
-        ...state,
-        ui: {
-          ...state.ui,
-          snackbar: {
-            open: true,
-            message: action.payload.message,
-            severity: action.payload.severity ?? "info",
-          },
-        },
-      };
-
-    case "CLOSE_SNACKBAR":
-      return {
-        ...state,
-        ui: { ...state.ui, snackbar: { ...state.ui.snackbar, open: false } },
-      };
-
-    /* ---- Cart ---- */
     case "ADD_TO_CART": {
-      const item = action.payload;
+      const item = action.payload; // {id,name,price,stock?,image?}
       const exists = state.cart.items.find((x) => x.id === item.id);
 
-      const items = exists
-        ? state.cart.items.map((x) =>
-            x.id === item.id ? { ...x, qty: x.qty + 1 } : x
-          )
-        : [...state.cart.items, { ...item, qty: 1 }];
+      if (exists) {
+        const max = Number(item.stock ?? exists.stock ?? Infinity);
+        const nextQty = exists.qty + 1;
+        if (Number.isFinite(max) && nextQty > max) return state;
 
+        const items = state.cart.items.map((x) =>
+          x.id === item.id
+            ? { ...x, qty: nextQty, stock: item.stock ?? x.stock, image: item.image ?? x.image }
+            : x
+        );
+        return { ...state, cart: { items } };
+      }
+
+      const items = [...state.cart.items, { ...item, qty: 1 }];
       return { ...state, cart: { items } };
     }
 
     case "INC_QTY": {
       const id = action.payload;
-      const items = state.cart.items.map((x) =>
-        x.id === id ? { ...x, qty: x.qty + 1 } : x
-      );
+      const items = state.cart.items.map((x) => {
+        if (x.id !== id) return x;
+
+        const max = Number(x.stock ?? Infinity);
+        const nextQty = x.qty + 1;
+        if (Number.isFinite(max) && nextQty > max) return x;
+
+        return { ...x, qty: nextQty };
+      });
       return { ...state, cart: { items } };
     }
 
@@ -141,80 +131,12 @@ function reducer(state, action) {
     case "CLEAR_CART":
       return { ...state, cart: { items: [] } };
 
-    /* ---- Orders ---- */
-    case "CREATE_ORDER": {
-      const role = state.auth.user?.role ?? "customer";
-      if (role !== "customer") return state;
+    case "SET_MY_ORDERS":
+      return { ...state, orders: { ...state.orders, my: action.payload } };
 
-      const order = action.payload;
-      return {
-        ...state,
-        orders: {
-          list: [order, ...state.orders.list],
-        },
-      };
-    }
-
-    /* ---- Catalog / Prices ---- */
-    case "UPDATE_PRICE": {
-      const role = state.auth.user?.role ?? "customer";
-      if (role !== "manager") return state;
-
-      const { id, oldPrice, newPrice, actorEmail, atISO } = action.payload;
-
-      return {
-        ...state,
-        catalog: {
-          ...state.catalog,
-          prices: { ...state.catalog.prices, [id]: newPrice },
-        },
-        audit: {
-          ...state.audit,
-          priceChanges: [
-            { id, oldPrice, newPrice, actorEmail, atISO },
-            ...state.audit.priceChanges,
-          ],
-        },
-      };
-    }
-
-    case "SET_ORDER_STATUS": {
-      const role = state.auth.user?.role ?? "customer";
-      const isStaff = role === "staff" || role === "manager";
-      if (!isStaff) return state;
-
-      const { orderId, status } = action.payload;
-
-      return {
-        ...state,
-        ops: {
-          ...state.ops,
-          orderStatusById: {
-            ...state.ops.orderStatusById,
-            [orderId]: status,
-          },
-        },
-      };
-    }
-
-    case "RESET_ORDER_STATUS": {
-      const role = state.auth.user?.role ?? "customer";
-      const isStaff = role === "staff" || role === "manager";
-      if (!isStaff) return state;
-
-      const { orderId } = action.payload;
-      const next = { ...state.ops.orderStatusById };
-      delete next[orderId];
-
-      return {
-        ...state,
-        ops: { ...state.ops, orderStatusById: next },
-      };
-    }
-
-    /* ---- Reset total ---- */
     case "RESET_PERSISTENCE":
       localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem("ferretex:token");
       return baseState;
 
     default:
@@ -222,140 +144,88 @@ function reducer(state, action) {
   }
 }
 
-/* =========================
-   Provider
-========================= */
 export function AppProvider({ children }) {
   const [state, dispatch] = useReducer(reducer, baseState, loadState);
 
-  // Persistencia automática
   useEffect(() => {
     saveState(state);
   }, [state]);
 
-  // ===== Helpers de stock (mock) =====
-  const getStockById = (id) => {
-    const p = baseProducts.find((x) => x.id === id);
-    const s = Number(p?.stock ?? 0);
-    return Number.isFinite(s) ? s : 0;
-  };
+  const actions = useMemo(() => {
+    const fetchMyOrdersInternal = async (token) => {
+      if (!token) return [];
+      const list = await api.getMyOrders({ token });
+      dispatch({ type: "SET_MY_ORDERS", payload: Array.isArray(list) ? list : [] });
+      return list;
+    };
 
-  const getCartQty = (id) =>
-    state.cart.items.find((x) => x.id === id)?.qty ?? 0;
-
-  const actions = useMemo(
-    () => ({
-      /* UI */
-      notify: (message, severity = "info") =>
-        dispatch({ type: "OPEN_SNACKBAR", payload: { message, severity } }),
-      closeSnackbar: () => dispatch({ type: "CLOSE_SNACKBAR" }),
-
-      /* Auth */
-      login: (user) => dispatch({ type: "LOGIN", payload: user }),
-      logout: () => dispatch({ type: "LOGOUT" }),
-
-      /* UI sort */
+    return {
+      // UI
       setSort: (sort) => dispatch({ type: "SET_SORT", payload: sort }),
 
-      /* Cart (con guard de stock) */
-      addToCart: (product) => {
-        const role = state.auth.user?.role ?? "customer";
-        if (role !== "customer") return;
-
-        const stock = getStockById(product.id);
-        const current = getCartQty(product.id);
-
-        if (stock <= 0) {
-          dispatch({
-            type: "OPEN_SNACKBAR",
-            payload: { message: "Producto sin stock.", severity: "warning" },
-          });
-          return;
-        }
-
-        if (current >= stock) {
-          dispatch({
-            type: "OPEN_SNACKBAR",
-            payload: {
-              message: `Stock máximo alcanzado (${stock}).`,
-              severity: "warning",
-            },
-          });
-          return;
-        }
-
-        dispatch({ type: "ADD_TO_CART", payload: product });
-      },
-
-      incQty: (id) => {
-        const role = state.auth.user?.role ?? "customer";
-        if (role !== "customer") return;
-
-        const stock = getStockById(id);
-        const current = getCartQty(id);
-
-        if (stock <= 0) {
-          dispatch({
-            type: "OPEN_SNACKBAR",
-            payload: { message: "Producto sin stock.", severity: "warning" },
-          });
-          return;
-        }
-
-        if (current >= stock) {
-          dispatch({
-            type: "OPEN_SNACKBAR",
-            payload: {
-              message: `Stock máximo alcanzado (${stock}).`,
-              severity: "warning",
-            },
-          });
-          return;
-        }
-
-        dispatch({ type: "INC_QTY", payload: id });
-      },
-
+      // Cart
+      addToCart: (product) => dispatch({ type: "ADD_TO_CART", payload: product }),
+      incQty: (id) => dispatch({ type: "INC_QTY", payload: id }),
       decQty: (id) => dispatch({ type: "DEC_QTY", payload: id }),
       removeFromCart: (id) => dispatch({ type: "REMOVE_FROM_CART", payload: id }),
       clearCart: () => dispatch({ type: "CLEAR_CART" }),
 
-      /* Orders */
-      createOrder: (order) => dispatch({ type: "CREATE_ORDER", payload: order }),
-
-      /* Prices */
-      updatePrice: ({ id, oldPrice, newPrice }) => {
-        const actorEmail = state.auth.user?.email ?? "unknown";
-        const atISO = new Date().toISOString();
-
-        dispatch({
-          type: "UPDATE_PRICE",
-          payload: { id, oldPrice, newPrice, actorEmail, atISO },
-        });
+      // Auth
+      login: ({ token, ...user }) => {
+        dispatch({ type: "SET_SESSION", payload: { token, user } });
       },
 
-      setOrderStatus: (orderId, status) =>
-        dispatch({ type: "SET_ORDER_STATUS", payload: { orderId, status } }),
-      resetOrderStatus: (orderId) =>
-        dispatch({ type: "RESET_ORDER_STATUS", payload: { orderId } }),
+      loginApi: async ({ email, password }) => {
+        const r = await api.login({ email, password });
+        dispatch({ type: "SET_SESSION", payload: { token: r.token, user: r.user } });
+        await fetchMyOrdersInternal(r.token);
+        return r.user;
+      },
 
-      /* Debug */
+      registerApi: async ({ name, email, password, role }) => {
+        await api.register({ name, email, password, role });
+        const r = await api.login({ email, password });
+        dispatch({ type: "SET_SESSION", payload: { token: r.token, user: r.user } });
+        await fetchMyOrdersInternal(r.token);
+        return r.user;
+      },
+
+      logout: () => dispatch({ type: "LOGOUT" }),
+
+      // Orders
+      fetchMyOrders: async () => fetchMyOrdersInternal(state.auth.token),
+
+      createOrderApi: async ({ orderId, mode, phone, address, notes, items }) => {
+        const token = state.auth.token;
+        if (!token) throw new Error("No autenticado");
+
+        const payload = {
+          id: orderId,
+          mode, // pickup | delivery
+          phone,
+          address: mode === "delivery" ? address : null,
+          notes: notes || "",
+          items: items.map((x) => ({ productId: x.id, qty: x.qty })),
+        };
+
+        const r = await api.createOrder({ token, payload });
+
+        dispatch({ type: "CLEAR_CART" });
+        await fetchMyOrdersInternal(token);
+        return r;
+      },
+
       resetPersistence: () => dispatch({ type: "RESET_PERSISTENCE" }),
-    }),
-    [state.auth.user, state.cart.items]
-  );
+    };
+  }, [state.auth.token]);
 
   const value = useMemo(() => ({ state, actions }), [state, actions]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }
 
-/* =========================
-   Hook
-========================= */
 export function useApp() {
   const ctx = useContext(AppContext);
   if (!ctx) throw new Error("useApp must be used within <AppProvider>");
   return ctx;
 }
-// Nota: Contexto global de la aplicación que maneja estado de autenticación, carrito, UI, catálogo, órdenes y operaciones

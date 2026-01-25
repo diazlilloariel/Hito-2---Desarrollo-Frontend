@@ -8,12 +8,14 @@ import {
   Paper,
   Stack,
   Typography,
+  Alert,
+  Skeleton,
 } from "@mui/material";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link as RouterLink, useNavigate, useParams } from "react-router-dom";
-import { products as baseProducts } from "../data/products.js";
 import { useApp } from "../context/AppContext.jsx";
 import ProductCard from "../shared/components/ProductCard.jsx";
+import { ferretexApi } from "../shared/api/ferretexApi.js";
 
 function moneyCLP(n) {
   return `$${Number(n).toLocaleString("es-CL")}`;
@@ -24,37 +26,88 @@ export default function ProductDetail() {
   const nav = useNavigate();
   const { state, actions } = useApp();
 
-  const product = useMemo(() => {
-    const p = baseProducts.find((x) => x.id === id);
-    if (!p) return null;
-    return {
-      ...p,
-      status: p.status ?? "none",
-      price: state.catalog.prices[p.id] ?? p.price,
-      stock: Number(p.stock ?? 0),
-      description:
-        p.description ??
-        "Producto de demostración. En producción este texto proviene del backend con ficha técnica y especificaciones.",
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [product, setProduct] = useState(null);
+  const [all, setAll] = useState([]);
+
+  useEffect(() => {
+    let alive = true;
+
+    const run = async () => {
+      setLoading(true);
+      setError("");
+
+      try {
+        const p = await ferretexApi.getProductById(id);
+        const list = await ferretexApi.getProducts(); // para “relacionados”
+        if (!alive) return;
+
+        // aplica override local (mock manager) si lo estás usando
+        const pFixed = {
+          ...p,
+          price: state.catalog.prices[p.id] ?? p.price,
+        };
+        const listFixed = list.map((x) => ({
+          ...x,
+          price: state.catalog.prices[x.id] ?? x.price,
+        }));
+
+        setProduct(pFixed);
+        setAll(listFixed);
+      } catch (e) {
+        if (!alive) return;
+        setError(e?.message || "No se pudo cargar el producto.");
+        setProduct(null);
+      } finally {
+        if (alive) setLoading(false);
+      }
+    };
+
+    run();
+    return () => {
+      alive = false;
     };
   }, [id, state.catalog.prices]);
 
   const related = useMemo(() => {
     if (!product) return [];
-    const list = baseProducts
+    return all
       .filter((x) => x.id !== product.id)
-      .slice(0, 3)
-      .map((x) => ({
-        ...x,
-        status: x.status ?? "none",
-        price: state.catalog.prices[x.id] ?? x.price,
-        stock: Number(x.stock ?? 0),
-      }));
-    return list;
-  }, [product, state.catalog.prices]);
+      .filter((x) => (x.category ?? "general") === (product.category ?? "general"))
+      .slice(0, 3);
+  }, [all, product]);
+
+  if (loading) {
+    return (
+      <Container sx={{ py: 3, maxWidth: 1100 }}>
+        <Skeleton width={180} height={40} />
+        <Grid container spacing={2} sx={{ mt: 1 }}>
+          <Grid item xs={12} md={6}>
+            <Paper sx={{ borderRadius: 3, overflow: "hidden" }}>
+              <Skeleton variant="rectangular" height={420} />
+            </Paper>
+          </Grid>
+          <Grid item xs={12} md={6}>
+            <Paper sx={{ p: 3, borderRadius: 3, height: "100%" }}>
+              <Skeleton height={36} />
+              <Skeleton height={36} width="60%" />
+              <Skeleton sx={{ mt: 2 }} />
+              <Skeleton />
+              <Skeleton />
+            </Paper>
+          </Grid>
+        </Grid>
+      </Container>
+    );
+  }
 
   if (!product) {
     return (
       <Container sx={{ py: 3 }}>
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {error || "Producto no encontrado."}
+        </Alert>
         <Typography variant="h5" fontWeight={900}>
           Producto no encontrado
         </Typography>
@@ -70,14 +123,16 @@ export default function ProductDetail() {
 
   const isOffer = product.status === "offer";
   const isNew = product.status === "new";
-  const out = product.stock <= 0;
+  const out = Number(product.stock ?? 0) <= 0;
 
   const add = () => {
-    if (out) return actions.notify("Sin stock disponible.", "warning");
+    if (out) return;
 
     const currentQty = state.cart.items.find((x) => x.id === product.id)?.qty ?? 0;
-    if (currentQty >= product.stock) {
-      return actions.notify("Stock máximo alcanzado en el carrito.", "warning");
+    if (currentQty >= (product.stock ?? 0)) {
+      // si tienes actions.notify, úsalo; si no, no hacemos crash
+      if (actions.notify) actions.notify("Stock máximo alcanzado en el carrito.", "warning");
+      return;
     }
 
     actions.addToCart({
@@ -86,7 +141,8 @@ export default function ProductDetail() {
       price: product.price,
       stock: product.stock,
     });
-    actions.notify("Producto agregado al carrito.", "success");
+
+    if (actions.notify) actions.notify("Producto agregado al carrito.", "success");
   };
 
   return (
@@ -128,7 +184,10 @@ export default function ProductDetail() {
                 {moneyCLP(product.price)}
               </Typography>
 
-              <Typography color="text.secondary">{product.description}</Typography>
+              <Typography color="text.secondary">
+                {product.description ||
+                  "Producto de demostración. En producción este texto proviene del backend con ficha técnica y especificaciones."}
+              </Typography>
 
               <Divider />
 
@@ -165,4 +224,3 @@ export default function ProductDetail() {
     </Container>
   );
 }
-// Nota: Página de detalle de producto con opción de agregar al carrito y ver productos relacionados    

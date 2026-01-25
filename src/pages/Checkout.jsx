@@ -20,7 +20,7 @@ function moneyCLP(n) {
 }
 
 function genOrderId() {
-  return `FX-${Math.floor(100000 + Math.random() * 900000)}`;
+  return `FX-${Date.now()}`;
 }
 
 export default function Checkout() {
@@ -30,16 +30,17 @@ export default function Checkout() {
   const items = state.cart.items;
 
   const subtotal = useMemo(
-    () => items.reduce((acc, x) => acc + x.price * x.qty, 0),
+    () => items.reduce((acc, x) => acc + Number(x.price) * Number(x.qty), 0),
     [items]
   );
 
-  const [mode, setMode] = useState("pickup"); // pickup | delivery
+  const [mode, setMode] = useState("pickup");
   const [name, setName] = useState(state.auth.user?.name ?? "");
   const [phone, setPhone] = useState("");
   const [address, setAddress] = useState("");
   const [notes, setNotes] = useState("");
-  const [done, setDone] = useState(null); // { orderId }
+  const [done, setDone] = useState(null);
+  const [err, setErr] = useState("");
 
   const canSubmit = useMemo(() => {
     if (!items.length) return false;
@@ -47,42 +48,26 @@ export default function Checkout() {
     if (!phone.trim()) return false;
     if (mode === "delivery" && !address.trim()) return false;
     return true;
-  }, [items, name, phone, mode, address]);
+  }, [items.length, name, phone, mode, address]);
 
-  const onConfirm = () => {
-    const orderId = genOrderId();
-    const atISO = new Date().toISOString();
-
-    const order = {
-      orderId,
-      atISO,
-      mode, // pickup | delivery
-      customer: {
-        name: name.trim(),
-        email: state.auth.user?.email ?? "",
+  const onConfirm = async () => {
+    setErr("");
+    try {
+      const orderId = genOrderId();
+      await actions.createOrderApi({
+        orderId,
+        mode,
         phone: phone.trim(),
-      },
-      delivery: mode === "delivery" ? { address: address.trim() } : null,
-      notes: notes.trim() || "",
-      items: items.map((x) => ({
-        id: x.id,
-        name: x.name,
-        price: x.price,
-        qty: x.qty,
-        lineTotal: x.price * x.qty,
-      })),
-      totals: {
-        subtotal,
-        total: subtotal, // sin shipping por ahora
-      },
-    };
-
-    actions.createOrder(order);
-    actions.clearCart();
-    setDone({ orderId });
+        address: address.trim(),
+        notes: notes.trim(),
+        items,
+      });
+      setDone({ orderId });
+    } catch (e) {
+      setErr(e?.message || "No se pudo crear la orden");
+    }
   };
 
-  // ===== Carrito vacío =====
   if (!items.length && !done) {
     return (
       <Container sx={{ py: 3, maxWidth: 900 }}>
@@ -90,17 +75,15 @@ export default function Checkout() {
           Checkout
         </Typography>
         <Alert severity="info">
-          No tienes productos en el carrito. Vuelve al catálogo para agregar
-          productos.
+          No tienes productos en el carrito. Vuelve al catálogo para agregar productos.
         </Alert>
-        <Button sx={{ mt: 2 }} variant="contained" onClick={() => nav("/catalogo")}>
+        <Button sx={{ mt: 2 }} variant="contained" onClick={() => nav("/catalog")}>
           Ir al catálogo
         </Button>
       </Container>
     );
   }
 
-  // ===== Confirmación =====
   if (done) {
     return (
       <Container sx={{ py: 3, maxWidth: 900 }}>
@@ -110,26 +93,22 @@ export default function Checkout() {
 
         <Paper sx={{ p: 3, borderRadius: 3 }}>
           <Stack spacing={1.5}>
-            <Alert severity="success">
-              Listo. Tu pedido fue generado correctamente.
-            </Alert>
+            <Alert severity="success">Listo. Tu pedido fue generado correctamente.</Alert>
 
             <Typography>
               Número de orden: <b>{done.orderId}</b>
             </Typography>
 
             <Typography color="text.secondary">
-              {mode === "pickup"
-                ? "Modalidad: Retiro en tienda"
-                : "Modalidad: Despacho"}
+              {mode === "pickup" ? "Modalidad: Retiro en tienda" : "Modalidad: Despacho"}
             </Typography>
 
-            <Stack direction="row" spacing={1} flexWrap="wrap">
-              <Button variant="contained" onClick={() => nav("/catalogo")}>
+            <Stack direction="row" spacing={1}>
+              <Button variant="contained" onClick={() => nav("/catalog")}>
                 Volver al catálogo
               </Button>
-              <Button variant="outlined" onClick={() => nav("/profile")}>
-                Ir a mi perfil
+              <Button variant="outlined" onClick={() => nav("/orders")}>
+                Ver mis órdenes
               </Button>
             </Stack>
           </Stack>
@@ -138,7 +117,6 @@ export default function Checkout() {
     );
   }
 
-  // ===== Formulario =====
   return (
     <Container sx={{ py: 3, maxWidth: 900 }}>
       <Typography variant="h5" fontWeight={900} mb={2}>
@@ -146,7 +124,8 @@ export default function Checkout() {
       </Typography>
 
       <Stack spacing={2}>
-        {/* Resumen */}
+        {!!err && <Alert severity="error">{err}</Alert>}
+
         <Paper sx={{ p: 2.5, borderRadius: 3 }}>
           <Typography fontWeight={900} mb={1}>
             Resumen
@@ -161,7 +140,7 @@ export default function Checkout() {
                 <Typography>
                   {x.name} <span style={{ color: "#777" }}>x{x.qty}</span>
                 </Typography>
-                <Typography fontWeight={800}>{moneyCLP(x.price * x.qty)}</Typography>
+                <Typography fontWeight={800}>{moneyCLP(Number(x.price) * Number(x.qty))}</Typography>
               </Box>
             ))}
           </Stack>
@@ -174,7 +153,6 @@ export default function Checkout() {
           </Box>
         </Paper>
 
-        {/* Modalidad */}
         <Paper sx={{ p: 2.5, borderRadius: 3 }}>
           <Typography fontWeight={900} mb={1}>
             Modalidad
@@ -197,7 +175,6 @@ export default function Checkout() {
           )}
         </Paper>
 
-        {/* Datos cliente */}
         <Paper sx={{ p: 2.5, borderRadius: 3 }}>
           <Typography fontWeight={900} mb={1}>
             Datos
@@ -236,9 +213,8 @@ export default function Checkout() {
           </Stack>
         </Paper>
 
-        {/* Acciones */}
-        <Stack direction="row" spacing={1} justifyContent="flex-end" flexWrap="wrap">
-          <Button variant="outlined" onClick={() => nav("/catalogo")}>
+        <Stack direction="row" spacing={1} justifyContent="flex-end">
+          <Button variant="outlined" onClick={() => nav("/catalog")}>
             Seguir comprando
           </Button>
           <Button
@@ -254,3 +230,6 @@ export default function Checkout() {
     </Container>
   );
 }
+// Manejo de resumen de orden y cálculo de subtotal
+// Formulario dinámico según modalidad de entrega (retiro/despacho)
+// Validaciones básicas antes de confirmar la orden
