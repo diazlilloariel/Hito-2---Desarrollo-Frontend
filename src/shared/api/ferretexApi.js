@@ -1,7 +1,5 @@
 // src/shared/api/ferretexApi.js
 
-// En Vite puedes definir:
-// VITE_API_URL=http://localhost:3000
 const API_BASE =
   (import.meta?.env?.VITE_API_URL || "http://localhost:3000").replace(/\/$/, "");
 
@@ -14,18 +12,16 @@ async function parseJsonSafe(res) {
   try {
     return JSON.parse(text);
   } catch {
-    return text; // por si el backend envía texto plano en algún error
+    return text;
   }
 }
 
 function buildQuery(params = {}) {
   const usp = new URLSearchParams();
-
   Object.entries(params).forEach(([k, v]) => {
     if (v === undefined || v === null || v === "") return;
     usp.set(k, String(v));
   });
-
   const qs = usp.toString();
   return qs ? `?${qs}` : "";
 }
@@ -37,42 +33,32 @@ function httpErrorMessage(payload, fallback) {
 }
 
 export function normalizeRole(role) {
-  // Tu DB contempla: cliente/admin/staff/manager/customer
-  // Tu front usa: customer/staff/manager
   const r = String(role || "").toLowerCase();
-
   if (r === "cliente") return "customer";
   if (r === "admin") return "manager";
   if (r === "staff") return "staff";
   if (r === "manager") return "manager";
   if (r === "customer") return "customer";
-
-  // fallback conservador
   return "customer";
 }
 
 function normalizeProduct(p) {
   if (!p) return p;
 
-  // Soporta formatos:
-  // - { name, price, image, stock, category }
-  // - { nombre, precio, imagen_url, stock_actual, category_name }
   const id = p.id;
   const name = p.name ?? p.nombre ?? "";
   const price = p.price ?? p.precio ?? 0;
 
-  // imagen
   const image = p.image ?? p.imagen ?? p.imagen_url ?? p.image_url ?? "";
 
-  // stock
   const stock =
     p.stock ??
     p.stock_actual ??
     p.stockActual ??
     p.inventory_stock ??
+    p.stock_available ??
     0;
 
-  // category puede venir como string o como nombre calculado
   const category =
     p.category ??
     p.categoria ??
@@ -82,19 +68,9 @@ function normalizeProduct(p) {
     p.category_slug ??
     null;
 
-  // status
   const status = p.status ?? "none";
 
-  return {
-    ...p,
-    id,
-    name,
-    price,
-    image,
-    stock,
-    category,
-    status,
-  };
+  return { ...p, id, name, price, image, stock, category, status };
 }
 
 async function request(path, { method = "GET", token, body } = {}) {
@@ -129,7 +105,7 @@ export const ferretexApi = {
     return request("/api/health");
   },
 
-  // Auth
+  /* ========== Auth ========== */
   async register({ name, email, password, role }) {
     return request("/api/auth/register", {
       method: "POST",
@@ -143,7 +119,6 @@ export const ferretexApi = {
       body: { email, password },
     });
 
-    // Normaliza rol por compatibilidad
     if (r?.user) {
       const role = normalizeRole(r.user.role ?? r.user.rol);
       r.user = { ...r.user, role };
@@ -151,9 +126,26 @@ export const ferretexApi = {
     return r;
   },
 
-  // Products
+  // Verificación de password para acciones sensibles (manager)
+  async verifyPassword({ token, password }) {
+    if (!token) throw new Error("Token requerido.");
+    if (!password) throw new Error("Password requerido.");
+
+    return request("/api/auth/verify-password", {
+      method: "POST",
+      token,
+      body: { password },
+    });
+  },
+
+  /* ========== Categories ========== */
+  async getCategories() {
+    const list = await request("/api/categories");
+    return Array.isArray(list) ? list : [];
+  },
+
+  /* ========== Products ========== */
   async getProducts(filters = {}) {
-    // El backend acepta: q, cat, status, sort, inStock, minPrice, maxPrice
     const qs = buildQuery(filters);
     const list = await request(`/api/products${qs}`);
     if (!Array.isArray(list)) return [];
@@ -165,7 +157,101 @@ export const ferretexApi = {
     return normalizeProduct(p);
   },
 
-  // Orders (customer)
+  async getProductsMeta() {
+    return request("/api/products/meta");
+  },
+
+  // Crear producto (manager)
+  async createProduct({ token, data }) {
+    if (!token) throw new Error("Token requerido.");
+
+    const payload = { ...(data ?? {}) };
+    if (payload.price !== undefined) payload.price = Number(payload.price);
+
+    if (
+      payload.stock_on_hand !== undefined &&
+      payload.stock_on_hand !== null &&
+      payload.stock_on_hand !== ""
+    ) {
+      payload.stock_on_hand = Number(payload.stock_on_hand);
+    }
+
+    const r = await request("/api/products", {
+      method: "POST",
+      token,
+      body: payload,
+    });
+
+    if (r?.product) r.product = normalizeProduct(r.product);
+    return r;
+  },
+
+  // Update producto (manager)
+  async updateProduct({ token, productId, data }) {
+    if (!token) throw new Error("Token requerido.");
+    if (!productId) throw new Error("productId requerido.");
+
+    const payload = { ...(data ?? {}) };
+    if (payload.price !== undefined) payload.price = Number(payload.price);
+
+    const r = await request(`/api/products/${encodeURIComponent(productId)}`, {
+      method: "PATCH",
+      token,
+      body: payload,
+    });
+
+    if (r?.product) r.product = normalizeProduct(r.product);
+    return r;
+  },
+
+  // Soft delete (manager)
+  async deactivateProduct({ token, productId }) {
+    if (!token) throw new Error("Token requerido.");
+    if (!productId) throw new Error("productId requerido.");
+
+    return request(`/api/products/${encodeURIComponent(productId)}/deactivate`, {
+      method: "PATCH",
+      token,
+    });
+  },
+
+  // Stock (staff/manager)
+  async updateInventory({ token, productId, stock_on_hand }) {
+    if (!token) throw new Error("Token requerido.");
+    if (!productId) throw new Error("productId requerido.");
+
+    const n = Number(stock_on_hand);
+    if (!Number.isInteger(n) || n < 0) {
+      throw new Error("stock_on_hand inválido (entero >= 0).");
+    }
+
+    return request(`/api/inventory/${encodeURIComponent(productId)}`, {
+      method: "PATCH",
+      token,
+      body: { stock_on_hand: n },
+    });
+  },
+
+  /* ========== ✅ Inventory read (staff/manager) ========== */
+  async getInventory({ token }) {
+    if (!token) throw new Error("Token requerido.");
+    const list = await request("/api/inventory", { token });
+    if (!Array.isArray(list)) return [];
+
+    // Mantiene compatibilidad: stock = stock_available
+    return list.map((row) => {
+      const normalized = normalizeProduct(row);
+      return {
+        ...normalized,
+        stock_on_hand: Number(row.stock_on_hand ?? 0),
+        stock_reserved: Number(row.stock_reserved ?? 0),
+        stock_available: Number(row.stock_available ?? normalized.stock ?? 0),
+        stock: Number(row.stock_available ?? normalized.stock ?? 0),
+      };
+    });
+  },
+
+  /* ========== Orders (customer) ========== */
   async createOrder({ token, payload }) {
     return request("/api/orders", {
       method: "POST",
@@ -179,7 +265,21 @@ export const ferretexApi = {
     return Array.isArray(list) ? list : [];
   },
 
-  // Ops (staff/manager)
+  /* ========== Ops (staff/manager) ========== */
+  async getOrdersMeta({ token }) {
+    return request("/api/orders/meta", { token });
+  },
+
+  async getOrders({ token, filters = {} } = {}) {
+    const qs = buildQuery(filters);
+    const list = await request(`/api/orders${qs}`, { token });
+    return Array.isArray(list) ? list : [];
+  },
+
+  async getOrderById({ token, orderId }) {
+    return request(`/api/orders/${encodeURIComponent(orderId)}`, { token });
+  },
+
   async updateOrderStatus({ token, orderId, status }) {
     return request(`/api/orders/${encodeURIComponent(orderId)}/status`, {
       method: "PATCH",
