@@ -91,7 +91,7 @@ function ChatRagFab() {
       </Fab>
 
       <Dialog open={open} onClose={() => setOpen(false)} fullWidth maxWidth="sm">
-        <DialogTitle>Asistente Ferretex (RAG gratis)</DialogTitle>
+        <DialogTitle>Asistente Ferretex</DialogTitle>
 
         <DialogContent dividers>
           <Stack spacing={1.25}>
