@@ -14,6 +14,7 @@ import {
   Stack,
   Typography,
   Paper,
+  Divider,
 } from "@mui/material";
 import { useMemo, useState } from "react";
 
@@ -35,10 +36,13 @@ function ChatRagFab() {
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  const [lastMatches, setLastMatches] = useState([]);
+
   const [messages, setMessages] = useState([
     {
       role: "assistant",
-      text: "Hola 👋 Pídeme productos por nombre, SKU o categoría (ej: “guante talla 9”, “FER-GUA-910”, “seguridad”).",
+      text: "Hola 👋 ¿Qué estás buscando hoy? Puedes escribir nombre, SKU o categoría. Ej: “guante talla 9” o “FER-GUA-910”.",
     },
   ]);
 
@@ -66,13 +70,22 @@ function ChatRagFab() {
 
       const reply = String(data?.reply || "No tengo respuesta para eso.");
       setMessages((prev) => [...prev, { role: "assistant", text: reply }]);
-    } catch (e) {
+
+      const matches = Array.isArray(data?.matches) ? data.matches : [];
+      setLastMatches(matches);
+    } catch (_e) {
       setError(
-        "No pude conectar con el backend. Si estás en Render free, puede estar “dormido”: reintenta en 10–20s.",
+        "No pude conectar con el backend. Si estás en Render free, puede estar dormido: reintenta en 10–20s.",
       );
     } finally {
       setLoading(false);
     }
+  };
+
+  const useMatch = (m) => {
+    const next = String(m?.sku || m?.title || "").trim();
+    if (!next) return;
+    setMessage(next);
   };
 
   return (
@@ -87,23 +100,24 @@ function ChatRagFab() {
           zIndex: 1500,
         }}
       >
-        Chat IA
+        Chat
       </Fab>
 
-      <Dialog open={open} onClose={() => setOpen(false)} fullWidth maxWidth="sm">
+      <Dialog
+        open={open}
+        onClose={() => setOpen(false)}
+        fullWidth
+        maxWidth="sm"
+      >
         <DialogTitle>Asistente Ferretex</DialogTitle>
 
         <DialogContent dividers>
           <Stack spacing={1.25}>
-            <Typography variant="body2" sx={{ opacity: 0.8 }}>
-              Backend: {API_BASE}
-            </Typography>
-
             <Paper
               variant="outlined"
               sx={{
                 p: 1.5,
-                height: 360,
+                height: 320,
                 overflow: "auto",
                 display: "flex",
                 flexDirection: "column",
@@ -118,7 +132,8 @@ function ChatRagFab() {
                     maxWidth: "85%",
                     p: 1,
                     borderRadius: 2,
-                    bgcolor: m.role === "user" ? "action.selected" : "background.paper",
+                    bgcolor:
+                      m.role === "user" ? "action.selected" : "background.paper",
                     border: "1px solid",
                     borderColor: "divider",
                     whiteSpace: "pre-wrap",
@@ -128,6 +143,60 @@ function ChatRagFab() {
                 </Box>
               ))}
             </Paper>
+
+            {Array.isArray(lastMatches) && lastMatches.length > 0 ? (
+              <>
+                <Divider />
+                <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>
+                  Te recomiendo estas
+                </Typography>
+
+                <Stack spacing={1}>
+                  {lastMatches.map((m, i) => (
+                    <Paper
+                      key={`${m?.id ?? i}`}
+                      variant="outlined"
+                      sx={{ p: 1.25, borderRadius: 2 }}
+                    >
+                      <Stack spacing={0.5}>
+                        <Typography variant="body2" sx={{ fontWeight: 800 }}>
+                          {m?.idx ? `${m.idx}) ` : ""}
+                          {m?.title || "Producto"}
+                        </Typography>
+
+                        <Typography variant="caption" sx={{ opacity: 0.8 }}>
+                          {m?.sku ? `SKU: ${m.sku}` : "SKU: —"}
+                          {m?.category ? ` • Categoría: ${m.category}` : ""}
+                        </Typography>
+
+                        {m?.snippet ? (
+                          <Typography variant="body2" sx={{ opacity: 0.9 }}>
+                            {m.snippet}…
+                          </Typography>
+                        ) : null}
+
+                        <Box sx={{ display: "flex", gap: 1, pt: 0.5 }}>
+                          <Button
+                            size="small"
+                            variant="contained"
+                            onClick={() => useMatch(m)}
+                          >
+                            Usar
+                          </Button>
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            onClick={() => setLastMatches([])}
+                          >
+                            Ocultar
+                          </Button>
+                        </Box>
+                      </Stack>
+                    </Paper>
+                  ))}
+                </Stack>
+              </>
+            ) : null}
 
             {error ? (
               <Typography variant="body2" color="error">
@@ -157,8 +226,12 @@ function ChatRagFab() {
           <Button onClick={() => setOpen(false)} disabled={loading}>
             Cerrar
           </Button>
-          <Button onClick={send} variant="contained" disabled={loading || !message.trim()}>
-            {loading ? "Consultando..." : "Enviar"}
+          <Button
+            onClick={send}
+            variant="contained"
+            disabled={loading || !message.trim()}
+          >
+            {loading ? "Buscando..." : "Enviar"}
           </Button>
         </DialogActions>
       </Dialog>
@@ -172,7 +245,13 @@ export default function App() {
       <CssBaseline />
       <AppProvider>
         <BrowserRouter>
-          <Box sx={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
+          <Box
+            sx={{
+              minHeight: "100vh",
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
             <AppNavbar />
 
             <Box component="main" sx={{ flexGrow: 1 }}>
@@ -184,7 +263,7 @@ export default function App() {
             <AppFooter />
             <AppSnackbar />
 
-            {/* ✅ Chat flotante RAG (gratis) */}
+            {/* ✅ Chat flotante */}
             <ChatRagFab />
           </Box>
         </BrowserRouter>
