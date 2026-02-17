@@ -1,226 +1,218 @@
+import { useEffect, useMemo, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
 import {
+  Alert,
   Box,
   Button,
   Chip,
+  CircularProgress,
   Container,
   Divider,
-  Grid,
   Paper,
   Stack,
+  TextField,
   Typography,
-  Alert,
-  Skeleton,
 } from "@mui/material";
-import { useEffect, useMemo, useState } from "react";
-import { Link as RouterLink, useNavigate, useParams } from "react-router-dom";
-import { useApp } from "../context/AppContext.jsx";
-import ProductCard from "../shared/components/ProductCard.jsx";
+import ArrowBackIcon from "@mui/icons-material/ArrowBack";
+import AddShoppingCartIcon from "@mui/icons-material/AddShoppingCart";
+import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import { ferretexApi } from "../shared/api/ferretexApi.js";
+import { useApp } from "../context/AppContext.jsx";
 
-function moneyCLP(n) {
-  return `$${Number(n).toLocaleString("es-CL")}`;
+function stockChip(stock) {
+  const s = Number(stock ?? 0);
+  if (s <= 0) return { label: "SIN STOCK", color: "error" };
+  if (s <= 5) return { label: "BAJO", color: "error" };
+  if (s <= 15) return { label: "ATENCIÓN", color: "warning" };
+  return { label: "OK", color: "success" };
+}
+
+function statusChip(status) {
+  const v = String(status ?? "none");
+  if (v === "offer") return { label: "OFERTA", color: "secondary" };
+  if (v === "new") return { label: "NUEVO", color: "success" };
+  return { label: "NORMAL", color: "default" };
 }
 
 export default function ProductDetail() {
   const { id } = useParams();
-  const nav = useNavigate();
+  const navigate = useNavigate();
   const { state, actions } = useApp();
 
+  const role = state.auth.user?.role ?? "customer";
+  const isStaff = role === "staff" || role === "manager";
+
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [err, setErr] = useState("");
   const [product, setProduct] = useState(null);
-  const [all, setAll] = useState([]);
+  const [qty, setQty] = useState(1);
+  const [added, setAdded] = useState(false);
 
   useEffect(() => {
     let alive = true;
 
-    const run = async () => {
-      setLoading(true);
-      setError("");
-
+    (async () => {
       try {
+        setLoading(true);
+        setErr("");
         const p = await ferretexApi.getProductById(id);
-        const list = await ferretexApi.getProducts(); // para “relacionados”
         if (!alive) return;
-
-        // aplica override local (mock manager) si lo estás usando
-        const pFixed = {
-          ...p,
-          price: state.catalog.prices[p.id] ?? p.price,
-        };
-        const listFixed = list.map((x) => ({
-          ...x,
-          price: state.catalog.prices[x.id] ?? x.price,
-        }));
-
-        setProduct(pFixed);
-        setAll(listFixed);
+        setProduct(p);
+        setQty(1);
       } catch (e) {
         if (!alive) return;
-        setError(e?.message || "No se pudo cargar el producto.");
-        setProduct(null);
+        setErr(e?.message || "No se pudo cargar el producto");
       } finally {
         if (alive) setLoading(false);
       }
-    };
+    })();
 
-    run();
     return () => {
       alive = false;
     };
-  }, [id, state.catalog.prices]);
+  }, [id]);
 
-  const related = useMemo(() => {
-    if (!product) return [];
-    return all
-      .filter((x) => x.id !== product.id)
-      .filter((x) => (x.category ?? "general") === (product.category ?? "general"))
-      .slice(0, 3);
-  }, [all, product]);
+  const priceCLP = useMemo(() => {
+    const n = Number(product?.price ?? 0);
+    return `$${n.toLocaleString("es-CL")}`;
+  }, [product?.price]);
 
-  if (loading) {
-    return (
-      <Container sx={{ py: 3, maxWidth: 1100 }}>
-        <Skeleton width={180} height={40} />
-        <Grid container spacing={2} sx={{ mt: 1 }}>
-          <Grid item xs={12} md={6}>
-            <Paper sx={{ borderRadius: 3, overflow: "hidden" }}>
-              <Skeleton variant="rectangular" height={420} />
-            </Paper>
-          </Grid>
-          <Grid item xs={12} md={6}>
-            <Paper sx={{ p: 3, borderRadius: 3, height: "100%" }}>
-              <Skeleton height={36} />
-              <Skeleton height={36} width="60%" />
-              <Skeleton sx={{ mt: 2 }} />
-              <Skeleton />
-              <Skeleton />
-            </Paper>
-          </Grid>
-        </Grid>
-      </Container>
+  const stock = Number(product?.stock ?? 0);
+  const stockInfo = useMemo(() => stockChip(stock), [stock]);
+  const stInfo = useMemo(() => statusChip(product?.status), [product?.status]);
+
+  const canBuy = !isStaff && stock > 0;
+
+  const onQtyChange = (v) => {
+    const n = Math.max(1, Math.floor(Number(v || 1)));
+    const clamped = Number.isFinite(stock) ? Math.min(n, Math.max(stock, 1)) : n;
+    setQty(clamped);
+  };
+
+  const handleAdd = () => {
+    if (!product) return;
+
+    actions.addToCartQty(
+      {
+        id: product.id,
+        name: product.name,
+        price: Number(product.price ?? 0),
+        stock: Number(product.stock ?? 0),
+        image: product.image || "",
+      },
+      qty
     );
-  }
 
-  if (!product) {
-    return (
-      <Container sx={{ py: 3 }}>
-        <Alert severity="error" sx={{ mb: 2 }}>
-          {error || "Producto no encontrado."}
-        </Alert>
-        <Typography variant="h5" fontWeight={900}>
-          Producto no encontrado
-        </Typography>
-        <Typography color="text.secondary" sx={{ mt: 0.5 }}>
-          El producto no existe o fue removido.
-        </Typography>
-        <Button sx={{ mt: 2 }} variant="contained" onClick={() => nav("/catalogo")}>
-          Volver al catálogo
-        </Button>
-      </Container>
-    );
-  }
-
-  const isOffer = product.status === "offer";
-  const isNew = product.status === "new";
-  const out = Number(product.stock ?? 0) <= 0;
-
-  const add = () => {
-    if (out) return;
-
-    const currentQty = state.cart.items.find((x) => x.id === product.id)?.qty ?? 0;
-    if (currentQty >= (product.stock ?? 0)) {
-      // si tienes actions.notify, úsalo; si no, no hacemos crash
-      if (actions.notify) actions.notify("Stock máximo alcanzado en el carrito.", "warning");
-      return;
-    }
-
-    actions.addToCart({
-      id: product.id,
-      name: product.name,
-      price: product.price,
-      stock: product.stock,
-    });
-
-    if (actions.notify) actions.notify("Producto agregado al carrito.", "success");
+    setAdded(true);
+    window.setTimeout(() => setAdded(false), 1000);
   };
 
   return (
-    <Container sx={{ py: 3, maxWidth: 1100 }}>
-      <Button component={RouterLink} to="/catalogo" variant="outlined">
-        Volver al catálogo
-      </Button>
+    <Container sx={{ py: 4 }}>
+      <Stack spacing={2}>
+        <Box>
+          <Button startIcon={<ArrowBackIcon />} onClick={() => navigate(-1)}>
+            Volver
+          </Button>
+        </Box>
 
-      <Grid container spacing={2} sx={{ mt: 1 }}>
-        <Grid item xs={12} md={6}>
-          <Paper sx={{ borderRadius: 3, overflow: "hidden" }}>
-            <Box
-              component="img"
-              src={product.image}
-              alt={product.name}
-              sx={{ width: "100%", height: 420, objectFit: "cover" }}
-            />
-          </Paper>
-        </Grid>
+        {loading && (
+          <Box sx={{ display: "flex", justifyContent: "center", py: 6 }}>
+            <CircularProgress />
+          </Box>
+        )}
 
-        <Grid item xs={12} md={6}>
-          <Paper sx={{ p: 3, borderRadius: 3, height: "100%" }}>
-            <Stack spacing={1.25}>
-              <Stack direction="row" spacing={1} flexWrap="wrap">
-                {isOffer && <Chip label="EN OFERTA" color="success" variant="filled" />}
-                {isNew && <Chip label="NUEVO" color="primary" variant="filled" />}
-                <Chip
-                  label={out ? "SIN STOCK" : `Stock: ${product.stock}`}
-                  color={out ? "error" : product.stock <= 5 ? "warning" : "default"}
-                  variant="outlined"
+        {!loading && err && <Alert severity="error">{err}</Alert>}
+
+        {!loading && !err && product && (
+          <Paper sx={{ p: 3, borderRadius: 3 }}>
+            <Stack direction={{ xs: "column", md: "row" }} spacing={3}>
+              <Box sx={{ flex: 1 }}>
+                <Box
+                  component="img"
+                  src={product.image}
+                  alt={product.name}
+                  sx={{
+                    width: "100%",
+                    maxHeight: 420,
+                    objectFit: "contain",
+                    borderRadius: 2,
+                    bgcolor: "background.default",
+                  }}
                 />
-              </Stack>
+              </Box>
 
-              <Typography variant="h4" fontWeight={950}>
-                {product.name}
-              </Typography>
+              <Box sx={{ flex: 1 }}>
+                <Stack spacing={1.5}>
+                  <Typography variant="h4" fontWeight={900}>
+                    {product.name}
+                  </Typography>
 
-              <Typography variant="h5" fontWeight={950}>
-                {moneyCLP(product.price)}
-              </Typography>
+                  <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                    <Chip label={`SKU: ${product.sku || "-"}`} />
+                    <Chip label={`Categoría: ${product.category || "-"}`} />
+                    <Chip label={`Stock: ${stock}`} color={stockInfo.color} />
+                    <Chip label={`Estado: ${stInfo.label}`} color={stInfo.color} />
+                  </Stack>
 
-              <Typography color="text.secondary">
-                {product.description ||
-                  "Producto de demostración. En producción este texto proviene del backend con ficha técnica y especificaciones."}
-              </Typography>
+                  <Divider />
 
-              <Divider />
+                  <Stack direction="row" justifyContent="space-between" alignItems="baseline">
+                    <Typography color="text.secondary">Precio</Typography>
+                    <Typography variant="h5" fontWeight={900}>
+                      {priceCLP}
+                    </Typography>
+                  </Stack>
 
-              <Stack direction="row" spacing={1} flexWrap="wrap">
-                <Button
-                  variant="contained"
-                  sx={{ fontWeight: 900 }}
-                  disabled={out}
-                  onClick={add}
-                >
-                  Agregar al carrito
-                </Button>
-                <Button variant="outlined" onClick={() => nav("/checkout")}>
-                  Ir a pagar
-                </Button>
-              </Stack>
+                  <Typography color="text.secondary" sx={{ whiteSpace: "pre-wrap" }}>
+                    {product.description || "Sin descripción."}
+                  </Typography>
+
+                  {!isStaff && (
+                    <>
+                      <Divider />
+
+                      <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} alignItems="center">
+                        <TextField
+                          label="Cantidad"
+                          type="number"
+                          value={qty}
+                          onChange={(e) => onQtyChange(e.target.value)}
+                          inputProps={{ min: 1, max: Math.max(stock, 1) }}
+                          sx={{ width: { xs: "100%", sm: 160 } }}
+                        />
+
+                        <Button
+                          fullWidth
+                          variant={added ? "outlined" : "contained"}
+                          disabled={!canBuy}
+                          onClick={handleAdd}
+                          startIcon={added ? <CheckCircleIcon /> : <AddShoppingCartIcon />}
+                          sx={{ fontWeight: 900 }}
+                        >
+                          {stock <= 0 ? "Sin stock" : added ? "Agregado" : "Agregar al carrito"}
+                        </Button>
+                      </Stack>
+
+                      {stock > 0 && (
+                        <Typography variant="caption" color="text.secondary">
+                          Stock disponible: {stock}
+                        </Typography>
+                      )}
+                    </>
+                  )}
+
+                  {isStaff && (
+                    <Alert severity="info">
+                      Vista Staff/Manager: solo lectura. El carrito es solo para cliente.
+                    </Alert>
+                  )}
+                </Stack>
+              </Box>
             </Stack>
           </Paper>
-        </Grid>
-      </Grid>
-
-      <Box sx={{ mt: 3 }}>
-        <Typography variant="h6" fontWeight={900} sx={{ mb: 1.25 }}>
-          Productos relacionados
-        </Typography>
-        <Grid container spacing={2}>
-          {related.map((p) => (
-            <Grid key={p.id} item xs={12} sm={6} md={4}>
-              <ProductCard {...p} stock={p.stock} status={p.status} />
-            </Grid>
-          ))}
-        </Grid>
-      </Box>
+        )}
+      </Stack>
     </Container>
   );
 }

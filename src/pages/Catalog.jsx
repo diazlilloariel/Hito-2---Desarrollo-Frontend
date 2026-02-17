@@ -18,13 +18,14 @@ import {
   Box,
   InputAdornment,
 } from "@mui/material";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
 import ProductCard from "../shared/components/ProductCard.jsx";
 import { useApp } from "../context/AppContext.jsx";
 import { ferretexApi } from "../shared/api/ferretexApi.js";
 
 const EMPTY_OBJ = Object.freeze({});
+const FALLBACK_CATEGORIES = ["herramientas", "fijaciones", "seguridad", "electricidad"];
 
 function isNonEmptyString(v) {
   return typeof v === "string" && v.trim().length > 0;
@@ -51,7 +52,7 @@ export default function Catalog() {
 
   const priceOverrides = useMemo(
     () => state?.catalog?.prices ?? EMPTY_OBJ,
-    [state?.catalog?.prices]
+    [state?.catalog?.prices],
   );
 
   const [searchParams, setSearchParams] = useSearchParams();
@@ -65,7 +66,7 @@ export default function Catalog() {
   const minPriceParam = searchParams.get("minPrice") ?? "";
   const maxPriceParam = searchParams.get("maxPrice") ?? "";
 
-  // Local UI state (inputs)
+  // Local UI state
   const [q, setQ] = useState(qParam);
   const [cat, setCat] = useState(catParam);
   const [status, setStatus] = useState(statusParam);
@@ -82,6 +83,10 @@ export default function Catalog() {
   const [error, setError] = useState("");
   const [products, setProducts] = useState([]);
 
+  // ✅ Categories (dinámicas)
+  const [categories, setCategories] = useState(FALLBACK_CATEGORIES);
+  const [catLoading, setCatLoading] = useState(true);
+
   // Sync query params -> inputs
   useEffect(() => {
     setQ(qParam);
@@ -94,86 +99,49 @@ export default function Catalog() {
     setMinPriceApplied(minPriceParam);
     setMaxPriceApplied(maxPriceParam);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    qParam,
-    catParam,
-    statusParam,
-    sortParam,
-    inStockParam,
-    minPriceParam,
-    maxPriceParam,
-  ]);
+  }, [qParam, catParam, statusParam, sortParam, inStockParam, minPriceParam, maxPriceParam]);
 
-  // Fetch
+  // ✅ Fetch categories (con fallback)
   useEffect(() => {
     let alive = true;
 
-    const run = async () => {
-      setLoading(true);
-      setError("");
-
+    (async () => {
       try {
-        const filters = {
-          q: isNonEmptyString(qParam) ? qParam : undefined,
-          cat: isNonEmptyString(catParam) ? catParam : undefined,
-          status: isNonEmptyString(statusParam) ? statusParam : undefined,
-          sort: isNonEmptyString(sortParam) ? sortParam : undefined,
-          inStock: inStock ? "true" : undefined,
-          minPrice: isNonEmptyString(minPriceApplied) ? minPriceApplied : undefined,
-          maxPrice: isNonEmptyString(maxPriceApplied) ? maxPriceApplied : undefined,
-        };
-
-        const list = await ferretexApi.getProducts(filters);
+        setCatLoading(true);
+        const list = await ferretexApi.getCategories(); // [{id,name}]
         if (!alive) return;
 
-        const normalized = (Array.isArray(list) ? list : []).map(normalizeProduct);
+        const names = (Array.isArray(list) ? list : [])
+          .map((c) => String(c?.name ?? "").trim().toLowerCase())
+          .filter(Boolean);
 
-        const enriched = normalized.map((p) => ({
-          ...p,
-          price: priceOverrides[p.id] ?? p.price,
-        }));
-
-        setProducts(enriched);
-      } catch (e) {
-        if (!alive) return;
-        setError(e?.message || "No se pudo cargar el catálogo.");
-        setProducts([]);
+        // Si el backend devuelve vacío, mantenemos fallback
+        if (names.length) setCategories(names);
+      } catch {
+        // fallback silencioso, no rompemos UX
       } finally {
-        if (alive) setLoading(false);
+        if (alive) setCatLoading(false);
       }
-    };
+    })();
 
-    run();
     return () => {
       alive = false;
     };
-  }, [
-    qParam,
-    catParam,
-    statusParam,
-    sortParam,
-    inStock,
-    minPriceApplied,
-    maxPriceApplied,
-    priceOverrides,
-  ]);
+  }, []);
 
   const activeChips = useMemo(() => {
     const chips = [];
     if (isNonEmptyString(qParam)) chips.push({ key: "q", label: `Buscar: ${qParam}` });
     if (isNonEmptyString(catParam)) chips.push({ key: "cat", label: `Categoría: ${catParam}` });
-    if (isNonEmptyString(statusParam))
-      chips.push({ key: "status", label: `Estado: ${statusParam}` });
+    if (isNonEmptyString(statusParam)) chips.push({ key: "status", label: `Estado: ${statusParam}` });
     if (isNonEmptyString(sortParam)) chips.push({ key: "sort", label: `Orden: ${sortParam}` });
     if (inStock) chips.push({ key: "inStock", label: "Solo con stock" });
-    if (isNonEmptyString(minPriceApplied))
-      chips.push({ key: "minPrice", label: `Min: ${minPriceApplied}` });
-    if (isNonEmptyString(maxPriceApplied))
-      chips.push({ key: "maxPrice", label: `Max: ${maxPriceApplied}` });
+    if (isNonEmptyString(minPriceApplied)) chips.push({ key: "minPrice", label: `Min: ${minPriceApplied}` });
+    if (isNonEmptyString(maxPriceApplied)) chips.push({ key: "maxPrice", label: `Max: ${maxPriceApplied}` });
     return chips;
   }, [qParam, catParam, statusParam, sortParam, inStock, minPriceApplied, maxPriceApplied]);
 
-  const applyFilters = () => {
+  const applyFilters = useCallback(() => {
     const next = new URLSearchParams(searchParams);
 
     const qV = q.trim();
@@ -209,7 +177,7 @@ export default function Catalog() {
     setMaxPriceApplied(maxV);
 
     setSearchParams(next);
-  };
+  }, [searchParams, setSearchParams, q, cat, status, sort, inStock, minPrice, maxPrice]);
 
   const clearFilters = () => {
     setQ("");
@@ -223,6 +191,53 @@ export default function Catalog() {
     setMaxPriceApplied("");
     setSearchParams({});
   };
+
+  const onKeyDownApply = (e) => {
+    if (e.key === "Enter") applyFilters();
+  };
+
+  const fetchCatalog = useCallback(async () => {
+    setLoading(true);
+    setError("");
+
+    try {
+      const filters = {
+        q: isNonEmptyString(qParam) ? qParam : undefined,
+        cat: isNonEmptyString(catParam) ? catParam : undefined,
+        status: isNonEmptyString(statusParam) ? statusParam : undefined,
+        sort: isNonEmptyString(sortParam) ? sortParam : undefined,
+        inStock: inStock ? "true" : undefined,
+        minPrice: isNonEmptyString(minPriceApplied) ? minPriceApplied : undefined,
+        maxPrice: isNonEmptyString(maxPriceApplied) ? maxPriceApplied : undefined,
+      };
+
+      const list = await ferretexApi.getProducts(filters);
+      const normalized = (Array.isArray(list) ? list : []).map(normalizeProduct);
+
+      const enriched = normalized.map((p) => ({
+        ...p,
+        price: priceOverrides[p.id] ?? p.price,
+      }));
+
+      setProducts(enriched);
+    } catch (e) {
+      setError(e?.message || "No se pudo cargar el catálogo.");
+      setProducts([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [qParam, catParam, statusParam, sortParam, inStock, minPriceApplied, maxPriceApplied, priceOverrides]);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      if (!alive) return;
+      await fetchCatalog();
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [fetchCatalog]);
 
   return (
     <Container sx={{ py: 4 }}>
@@ -238,7 +253,6 @@ export default function Catalog() {
 
         {/* Filters */}
         <Paper sx={{ p: 2, borderRadius: 3 }}>
-          {/* Fila 1: buscar + selects (más anchos) */}
           <Box
             sx={{
               display: "grid",
@@ -252,17 +266,24 @@ export default function Catalog() {
               label="Buscar"
               value={q}
               onChange={(e) => setQ(e.target.value)}
+              onKeyDown={onKeyDownApply}
               placeholder="Ej: taladro, tornillos..."
             />
 
             <FormControl fullWidth>
               <InputLabel>Categoría</InputLabel>
-              <Select value={cat} label="Categoría" onChange={(e) => setCat(e.target.value)}>
+              <Select
+                value={cat}
+                label="Categoría"
+                onChange={(e) => setCat(e.target.value)}
+                disabled={catLoading}
+              >
                 <MenuItem value="">Todas</MenuItem>
-                <MenuItem value="herramientas">herramientas</MenuItem>
-                <MenuItem value="fijaciones">fijaciones</MenuItem>
-                <MenuItem value="seguridad">seguridad</MenuItem>
-                <MenuItem value="electricidad">electricidad</MenuItem>
+                {categories.map((c) => (
+                  <MenuItem key={c} value={c}>
+                    {c}
+                  </MenuItem>
+                ))}
               </Select>
             </FormControl>
 
@@ -282,11 +303,12 @@ export default function Catalog() {
                 <MenuItem value="">Default</MenuItem>
                 <MenuItem value="price_asc">Precio ↑</MenuItem>
                 <MenuItem value="price_desc">Precio ↓</MenuItem>
+                <MenuItem value="name_asc">Nombre A→Z</MenuItem>
+                <MenuItem value="name_desc">Nombre Z→A</MenuItem>
               </Select>
             </FormControl>
           </Box>
 
-          {/* Fila 2: stock + min/max + botones */}
           <Box
             sx={{
               mt: 2,
@@ -306,10 +328,9 @@ export default function Catalog() {
               label="Min"
               value={minPrice}
               onChange={(e) => setMinPrice(e.target.value)}
+              onKeyDown={onKeyDownApply}
               inputMode="numeric"
-              InputProps={{
-                startAdornment: <InputAdornment position="start">$</InputAdornment>,
-              }}
+              InputProps={{ startAdornment: <InputAdornment position="start">$</InputAdornment> }}
             />
 
             <TextField
@@ -317,10 +338,9 @@ export default function Catalog() {
               label="Max"
               value={maxPrice}
               onChange={(e) => setMaxPrice(e.target.value)}
+              onKeyDown={onKeyDownApply}
               inputMode="numeric"
-              InputProps={{
-                startAdornment: <InputAdornment position="start">$</InputAdornment>,
-              }}
+              InputProps={{ startAdornment: <InputAdornment position="start">$</InputAdornment> }}
             />
 
             <Stack direction="row" spacing={1} justifyContent={{ xs: "flex-start", md: "flex-end" }}>
@@ -336,7 +356,7 @@ export default function Catalog() {
           {activeChips.length > 0 && (
             <>
               <Divider sx={{ my: 2 }} />
-              <Stack direction="row" spacing={1} flexWrap="wrap">
+              <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
                 {activeChips.map((c) => (
                   <Chip key={c.key} label={c.label} />
                 ))}
@@ -345,17 +365,39 @@ export default function Catalog() {
           )}
         </Paper>
 
-        {/* Results */}
-        {error && <Alert severity="error">{error}</Alert>}
+        {error && (
+          <Alert
+            severity="error"
+            action={
+              <Button color="inherit" size="small" onClick={fetchCatalog} sx={{ fontWeight: 900 }}>
+                Reintentar
+              </Button>
+            }
+          >
+            {error}
+          </Alert>
+        )}
 
         {loading ? (
           <Box sx={{ display: "grid", gap: 2, gridTemplateColumns: "repeat(12, 1fr)" }}>
             {Array.from({ length: 8 }).map((_, i) => (
-              <Box key={i} sx={{ gridColumn: { xs: "span 12", sm: "span 6", md: "span 3" } }}>
-                <Paper sx={{ p: 2, borderRadius: 3 }}>
-                  <Skeleton variant="rectangular" height={150} />
-                  <Skeleton sx={{ mt: 1 }} />
-                  <Skeleton width="60%" />
+              <Box
+                key={i}
+                sx={{ gridColumn: { xs: "span 12", sm: "span 6", md: "span 4", lg: "span 3" } }}
+              >
+                <Paper sx={{ borderRadius: 3, overflow: "hidden" }}>
+                  <Skeleton variant="rectangular" height={190} />
+                  <Box sx={{ p: 2 }}>
+                    <Skeleton />
+                    <Skeleton width="70%" />
+                    <Divider sx={{ my: 1.25 }} />
+                    <Skeleton width="40%" />
+                    <Skeleton width="60%" />
+                  </Box>
+                  <Box sx={{ p: 2, pt: 0, display: "flex", gap: 1 }}>
+                    <Skeleton variant="rectangular" height={36} sx={{ flex: 1, borderRadius: 2 }} />
+                    <Skeleton variant="rectangular" height={36} sx={{ flex: 1, borderRadius: 2 }} />
+                  </Box>
                 </Paper>
               </Box>
             ))}
@@ -363,7 +405,10 @@ export default function Catalog() {
         ) : (
           <Box sx={{ display: "grid", gap: 2, gridTemplateColumns: "repeat(12, 1fr)" }}>
             {products.map((p) => (
-              <Box key={p.id} sx={{ gridColumn: { xs: "span 12", sm: "span 6", md: "span 3" } }}>
+              <Box
+                key={p.id}
+                sx={{ gridColumn: { xs: "span 12", sm: "span 6", md: "span 4", lg: "span 3" } }}
+              >
                 <ProductCard {...p} />
               </Box>
             ))}

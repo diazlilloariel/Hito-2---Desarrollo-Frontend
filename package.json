@@ -3,6 +3,9 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
+  "author": "Ariel Antonio Diaz Lillo",
+  "license": "UNLICENSED",
+  "description": "Ferretex SPA (Frontend) — Software propietario. Copyright (c) 2026 Ariel Antonio Diaz Lillo. All rights reserved.",
   "scripts": {
     "dev": "vite",
     "build": "vite build",

@@ -56,6 +56,12 @@ function saveState(state) {
   else localStorage.removeItem("ferretex:token");
 }
 
+function clampQty(qty) {
+  const n = Number(qty);
+  if (!Number.isFinite(n)) return 1;
+  return Math.max(1, Math.floor(n));
+}
+
 function reducer(state, action) {
   switch (action.type) {
     case "SET_SORT":
@@ -79,6 +85,56 @@ function reducer(state, action) {
         orders: { my: [] },
       };
 
+    // ✅ Nuevo: permite agregar N unidades de una vez
+    case "ADD_TO_CART_QTY": {
+      const { item, qty } = action.payload; // { item: {id,name,price,stock?,image?}, qty }
+      const addQty = clampQty(qty);
+
+      const exists = state.cart.items.find((x) => x.id === item.id);
+      const max = Number(item.stock ?? exists?.stock ?? Infinity);
+
+      if (exists) {
+        const nextQty = exists.qty + addQty;
+        if (Number.isFinite(max) && nextQty > max) {
+          // si se pasa del stock, “clampa” al máximo
+          const clamped = Math.max(0, max);
+          if (clamped <= exists.qty) return state;
+
+          const items = state.cart.items.map((x) =>
+            x.id === item.id
+              ? {
+                  ...x,
+                  qty: clamped,
+                  stock: item.stock ?? x.stock,
+                  image: item.image ?? x.image,
+                }
+              : x
+          );
+          return { ...state, cart: { items } };
+        }
+
+        const items = state.cart.items.map((x) =>
+          x.id === item.id
+            ? {
+                ...x,
+                qty: nextQty,
+                stock: item.stock ?? x.stock,
+                image: item.image ?? x.image,
+              }
+            : x
+        );
+        return { ...state, cart: { items } };
+      }
+
+      // nuevo item
+      const initialQty = Number.isFinite(max) ? Math.min(addQty, max) : addQty;
+      if (initialQty <= 0) return state;
+
+      const items = [...state.cart.items, { ...item, qty: initialQty }];
+      return { ...state, cart: { items } };
+    }
+
+    // compat: se mantiene, pero internamente es “+1”
     case "ADD_TO_CART": {
       const item = action.payload; // {id,name,price,stock?,image?}
       const exists = state.cart.items.find((x) => x.id === item.id);
@@ -165,6 +221,8 @@ export function AppProvider({ children }) {
 
       // Cart
       addToCart: (product) => dispatch({ type: "ADD_TO_CART", payload: product }),
+      addToCartQty: (product, qty) =>
+        dispatch({ type: "ADD_TO_CART_QTY", payload: { item: product, qty } }),
       incQty: (id) => dispatch({ type: "INC_QTY", payload: id }),
       decQty: (id) => dispatch({ type: "DEC_QTY", payload: id }),
       removeFromCart: (id) => dispatch({ type: "REMOVE_FROM_CART", payload: id }),
