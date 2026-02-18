@@ -24,6 +24,9 @@ export default function AppFooter() {
 
   const year = new Date().getFullYear();
 
+  const licenseName = "CC BY-NC-ND 4.0";
+  const licenseUrl = "https://creativecommons.org/licenses/by-nc-nd/4.0/";
+
   return (
     <Box sx={{ mt: 6 }}>
       <Paper sx={{ borderRadius: 0, bgcolor: "grey.100" }} elevation={0}>
@@ -113,9 +116,28 @@ export default function AppFooter() {
 
           <Divider sx={{ my: 2 }} />
 
-          <Typography variant="body2" color="text.secondary">
-            © {year} {storeName}. Todos los derechos reservados.
-          </Typography>
+          <Stack
+            direction={{ xs: "column", sm: "row" }}
+            spacing={0.5}
+            justifyContent="space-between"
+            alignItems={{ xs: "flex-start", sm: "center" }}
+          >
+            <Typography variant="body2" color="text.secondary">
+              © {year} {storeName}. Algunos derechos reservados.
+            </Typography>
+
+            <Typography variant="body2" color="text.secondary">
+              Licencia:{" "}
+              <Link
+                href={licenseUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                underline="hover"
+              >
+                {licenseName}
+              </Link>
+            </Typography>
+          </Stack>
         </Container>
       </Paper>
     </Box>
